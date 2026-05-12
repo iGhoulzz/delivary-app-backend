@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec *)",
+      "Bash(php -r \"echo extension_loaded\\('exif'\\) ? 'EXIF: loaded OK' : 'EXIF: still not loaded';\")",
+      "Bash(composer require *)",
+      "Bash(php artisan *)",
+      "PowerShell(php artisan tinker --execute=\"echo 'regions.base_fee: '.\\(\\\\Schema::hasColumn\\('regions','base_fee'\\)?'true':'false'\\).PHP_EOL; echo 'orders.pickup_geofence_confirmed_at: '.\\(\\\\Schema::hasColumn\\('orders','pickup_geofence_confirmed_at'\\)?'true':'false'\\).PHP_EOL; echo 'driver_presence_logs table: '.\\(\\\\Schema::hasTable\\('driver_presence_logs'\\)?'true':'false'\\).PHP_EOL;\")",
+      "Bash(cd C:\\\\\\\\Users\\\\\\\\User\\\\\\\\Desktop\\\\\\\\delivary-app)"
+    ]
+  }
+}
