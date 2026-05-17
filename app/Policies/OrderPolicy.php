@@ -53,12 +53,53 @@ final class OrderPolicy
     public function cancelByUser(User $user, Order $order): bool
     {
         return $this->viewAsSender($user, $order)
-            && $order->status === OrderStatus::NoDriverAvailable;
+            && in_array($order->status, [
+                OrderStatus::AwaitingDriver,
+                OrderStatus::NoDriverAvailable,
+                OrderStatus::Assigned,
+                OrderStatus::DriverEnRoutePickup,
+            ], true);
     }
 
     public function confirmGeofenceBySender(User $user, Order $order): bool
     {
         return $this->viewAsSender($user, $order)
             && $order->status === OrderStatus::DriverEnRoutePickup;
+    }
+
+    public function markDeliveryFailedByDriver(User $user, Order $order): bool
+    {
+        return $this->act($user, $order)
+            && in_array($order->status, [
+                OrderStatus::PickedUp,
+                OrderStatus::DriverEnRouteDropoff,
+                OrderStatus::DeliveryInProgress,
+            ], true);
+    }
+
+    public function viewByOffice(User $user, Order $order): bool
+    {
+        return $user->hasRole('office_staff')
+            && $this->orderInUsersOffice($user, $order);
+    }
+
+    public function receiveReturnByOffice(User $user, Order $order): bool
+    {
+        return $user->hasRole('office_staff')
+            && $order->status === OrderStatus::ReturningToOffice
+            && $this->orderInUsersOffice($user, $order);
+    }
+
+    public function retrieveByOffice(User $user, Order $order): bool
+    {
+        return $user->hasRole('office_staff')
+            && $order->status === OrderStatus::AtOffice
+            && $this->orderInUsersOffice($user, $order);
+    }
+
+    private function orderInUsersOffice(User $user, Order $order): bool
+    {
+        return $order->return_office_id !== null
+            && $user->isAssignedToOffice($order->return_office_id);
     }
 }

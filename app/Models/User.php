@@ -131,6 +131,18 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
         return $this->hasMany(OfficeStaffAssignment::class);
     }
 
+    /**
+     * Whether this user currently holds an ACTIVE office staff assignment at the given office.
+     * Used by policies to gate office-scope actions (D + settlement milestones).
+     */
+    public function isAssignedToOffice(int $officeId): bool
+    {
+        return $this->officeStaffAssignments()
+            ->active()
+            ->where('office_id', $officeId)
+            ->exists();
+    }
+
     public function offices(): BelongsToMany
     {
         return $this->belongsToMany(OfficeLocation::class, 'office_staff_assignments', 'user_id', 'office_id')
@@ -256,5 +268,10 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
     public function sellerPayouts(): HasMany
     {
         return $this->hasMany(SellerPayout::class);
+    }
+
+    public function sellerEarnings(): HasMany
+    {
+        return $this->hasMany(SellerEarning::class, 'seller_user_id');
     }
 }
