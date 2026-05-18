@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
+use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as AdminSettlementListSellerPayoutsController;
+use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as AdminSettlementListSettlementsController;
+use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as AdminSettlementReverseSettlementController;
+use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
 use App\Http\Controllers\Api\Auth\LogoutController;
@@ -36,11 +40,16 @@ use App\Http\Controllers\Api\Office\DriverOnboardingController;
 use App\Http\Controllers\Api\Office\Order\OrderController as OfficeOrderController;
 use App\Http\Controllers\Api\Office\Order\ReceiveReturnController as OfficeOrderReceiveReturnController;
 use App\Http\Controllers\Api\Office\Order\RetrieveOrderController as OfficeOrderRetrieveOrderController;
+use App\Http\Controllers\Api\Office\Settlement\ListSellerPayoutsController as OfficeSettlementListSellerPayoutsController;
+use App\Http\Controllers\Api\Office\Settlement\ListSettlementsController as OfficeSettlementListSettlementsController;
+use App\Http\Controllers\Api\Office\Settlement\LookupSellerPayoutController as OfficeSettlementLookupSellerPayoutController;
+use App\Http\Controllers\Api\Office\Settlement\PreviewSettlementController as OfficeSettlementPreviewSettlementController;
+use App\Http\Controllers\Api\Office\Settlement\ProcessSellerPayoutController as OfficeSettlementProcessSellerPayoutController;
+use App\Http\Controllers\Api\Office\Settlement\ProcessSettlementController as OfficeSettlementProcessSettlementController;
 use App\Http\Controllers\Api\Order\OrderController;
 use App\Http\Controllers\Api\Order\QuoteController;
 use App\Http\Controllers\Api\Profile\ProfileController;
 use App\Http\Controllers\Api\Tracking\GuestTrackingController;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 // ─── Auth ────────────────────────────────────────────────────────────────
@@ -149,21 +158,21 @@ Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/orders'
 
 // ─── /office — settlement & seller payouts ──────────────────────────────
 Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office')->group(function (): void {
-    Route::get('drivers/{driverPublicId}/settlement-preview', \App\Http\Controllers\Api\Office\Settlement\PreviewSettlementController::class)
+    Route::get('drivers/{driverPublicId}/settlement-preview', OfficeSettlementPreviewSettlementController::class)
         ->name('office.settlements.preview');
 
-    Route::post('settlements', \App\Http\Controllers\Api\Office\Settlement\ProcessSettlementController::class)
+    Route::post('settlements', OfficeSettlementProcessSettlementController::class)
         ->middleware('throttle:office_settlement')
         ->name('office.settlements.process');
-    Route::get('settlements', \App\Http\Controllers\Api\Office\Settlement\ListSettlementsController::class)
+    Route::get('settlements', OfficeSettlementListSettlementsController::class)
         ->name('office.settlements.index');
 
-    Route::get('seller-payouts/lookup', \App\Http\Controllers\Api\Office\Settlement\LookupSellerPayoutController::class)
+    Route::get('seller-payouts/lookup', OfficeSettlementLookupSellerPayoutController::class)
         ->name('office.seller-payouts.lookup');
-    Route::post('seller-payouts', \App\Http\Controllers\Api\Office\Settlement\ProcessSellerPayoutController::class)
+    Route::post('seller-payouts', OfficeSettlementProcessSellerPayoutController::class)
         ->middleware('throttle:office_payout')
         ->name('office.seller-payouts.process');
-    Route::get('seller-payouts', \App\Http\Controllers\Api\Office\Settlement\ListSellerPayoutsController::class)
+    Route::get('seller-payouts', OfficeSettlementListSellerPayoutsController::class)
         ->name('office.seller-payouts.index');
 });
 
@@ -177,7 +186,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/drivers')->grou
     Route::post('{driverProfile}/reinstate', [AdminDriverController::class, 'reinstate']);
 });
 
-// ─── /driver — driver self-service ──────────────────────────────────────
+// /admin/orders - admin order lifecycle management
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/orders')->group(function (): void {
     Route::get('/', [AdminOrderController::class, 'index']);
     Route::get('{order:public_id}', [AdminOrderController::class, 'show']);
@@ -191,17 +200,18 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/orders')->group
 
 // ─── /admin — settlement & seller payouts ───────────────────────────────
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(function (): void {
-    Route::get('settlements', \App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController::class)
+    Route::get('settlements', AdminSettlementListSettlementsController::class)
         ->name('admin.settlements.index');
-    Route::get('settlements/{settlement:public_id}', \App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController::class)
+    Route::get('settlements/{settlement:public_id}', AdminSettlementShowSettlementController::class)
         ->name('admin.settlements.show');
-    Route::post('settlements/{settlement:public_id}/reverse', \App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController::class)
+    Route::post('settlements/{settlement:public_id}/reverse', AdminSettlementReverseSettlementController::class)
         ->name('admin.settlements.reverse');
 
-    Route::get('seller-payouts', \App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController::class)
+    Route::get('seller-payouts', AdminSettlementListSellerPayoutsController::class)
         ->name('admin.seller-payouts.index');
 });
 
+// /driver - driver self-service
 Route::middleware(['auth:sanctum', 'role:driver'])->prefix('driver')->group(function (): void {
     Route::get('profile', DriverViewProfileController::class);
     Route::get('account', DriverAccountController::class);
@@ -235,8 +245,3 @@ Route::middleware(['auth:sanctum', 'role:driver'])->prefix('driver')->group(func
             ->middleware('throttle:driver_action');
     });
 });
-
-// ─── Default Sanctum scaffolding (kept until cleanup pass) ───────────────
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
