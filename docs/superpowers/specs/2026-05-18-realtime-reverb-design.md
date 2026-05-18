@@ -25,7 +25,7 @@ This is a backend-only milestone. Mobile/web clients are not in scope — only t
 | 2 | **Driver location:** server-side fan-out on existing `POST /api/driver/location`. Driver app stays HTTP-only — does NOT maintain a WebSocket connection | Cellular networks drop persistent sockets constantly; HTTP-up + WS-down is the industry standard for ride-hail/delivery (Uber, DoorDash, Talabat, Careem). Server stays authoritative for dispute audit. |
 | 3 | **Driver new-order push:** Reverb push to eligible drivers + keep `GET /api/driver/orders/broadcast` polling endpoint as fallback | Push is the spec; polling stays as resync path after socket reconnect |
 | 4 | **Channel auth:** Sanctum bearer token on `/broadcasting/auth`. Reverb itself never sees the token | Sanctum token mode is correct for mobile-first; this is the default Laravel real-time stack |
-| 5 | **Event payloads:** self-contained via existing actor-aware Resources. Driver location is the only exception (tiny custom array) | One source of truth (Resource); no double network roundtrip per push; no admin-field leaks because actor-specific Resources already exist (`OrderResource` for sender, `DriverOrderResource` for driver, etc.) |
+| 5 | **Event payloads:** self-contained via **dedicated broadcast-safe Resources**. Existing actor-aware Resources (`OrderResource`, `DriverProfileResource`) are NOT safe in queued broadcasts because they branch on `$request->user()` which is null off the HTTP request. See §4.0 for the broadcast-resource policy. Driver location is the one exception (tiny custom array) |
 | 6 | **Queues:** `default` + `broadcasts` only. Location uses `ShouldBroadcastNow` — bypasses queues entirely | Location is ephemeral; next ping supersedes lost ones. Business events go through Redis queue (~100ms is fine). |
 | 7 | **Observability:** Supervisor logs + Laravel broadcast failure logs + Reverb `/metrics` endpoint exposed | Lightweight for MVP. No Prometheus/Grafana, no hourly connection logging. |
 | 8 | **No admin/office dashboard channel in this milestone** | Their dashboards keep polling or open a specific `private:order.{id}` on detail view. Dashboard-wide admin channel = future milestone. |
@@ -86,14 +86,32 @@ This is a backend-only milestone. Mobile/web clients are not in scope — only t
 
 ## 4. Events catalog
 
+### 4.0 Broadcast-safe Resource policy (read first)
+
+**Why this section exists:** `OrderResource` and `DriverProfileResource` cannot be used directly in queued broadcasts. `OrderResource` branches on `$request->user()` (lines 24–25) to decide whether to expose pickup notes, receiver phone, codes, commission. In a queued broadcast there's no HTTP request — `$request->user()` is null, so `$isSender` and `$isReceiver` are both false and the payload is wrong. `DriverProfileResource` exposes internal fields (`id`, `user_id`, `office_id`, `vehicle_plate`, `lifetime_deliveries`, etc.) — not safe for sender/receiver consumption.
+
+**Policy:** broadcast events use dedicated, audience-neutral, request-independent Resources. These are created in Phase 1 (foundation work):
+
+- **`App\Http\Resources\Broadcast\OrderForPartiesResource`** — for `private:order.{public_id}`. Audience-neutral (no `$isSender`/`$isReceiver` branching). Includes: `id` (public_id), `order_type`, `status`, `display_status`, pickup address+location, receiver address+location (no phone/name unless explicitly sender-shared), item description+size, pricing summary (delivery_fee, delivery_fee_payer, cash_collected_at_delivery), driver block (first_name, vehicle_type/color, current_location, last_seen_at), timestamps. **Excludes:** pickup notes, receiver phone/name, pickup_code, delivery_code, commission_amount.
+
+- **`App\Http\Resources\Broadcast\DriverForOrderResource`** — for `OrderDriverAssigned`. Includes: first_name, vehicle_type, vehicle_color, current_location, rating_average, lifetime_deliveries. **Excludes:** internal id/user_id/office_id, vehicle_plate, statuses.
+
+- **Existing `GuestTrackingResource`** is already request-independent and safe — reused for `public:track.{token}` order events.
+
+- **Existing `BroadcastOrderResource`** (in `app/Http/Resources/Order/`, for the driver's "available orders" payload) — safe, request-independent — reused for `OrderBroadcastToDriver`.
+
+- **Existing `DriverAccountResource`** — Codex must verify it is request-independent. If it branches on `$request->user()`, create `Broadcast\DriverAccountForBroadcastResource` and use that instead. If it's already safe, use it directly.
+
+If Codex finds an existing Resource needed for a broadcast that turns out to be request-dependent, **stop and raise it with Claude** before adding a new broadcast variant.
+
 ### 4.1 Order lifecycle — `private:order.{public_id}` + `public:track.{token}`
 
 | Event | Trigger | Channel | Payload |
 |---|---|---|---|
-| `OrderStatusChanged` (existing) — add `ShouldBroadcast` | Any status transition logged via `StateTransitionService`, `ClaimService`, `AdminAssignmentService` | `private:order.{public_id}` | `{type, order: OrderResource, transition: {from, to, changed_at}}` |
-| `OrderStatusChangedPublic` (new) — paired sibling for guest tracking | Dispatched right after `OrderStatusChanged` in the same three sites | `public:track.{tracking_token}` | `{type, order: GuestTrackingResource, transition: {from, to, changed_at}}` |
-| `OrderDriverAssigned` (new) | Driver claims OR admin assigns | `private:order.{public_id}` + `public:track.{tracking_token}` | `{type, driver: DriverProfileResource}` — sender-safe fields only |
-| `OrderDriverLocationUpdated` (new, **`ShouldBroadcastNow`**) | Every `POST /api/driver/location` while driver has an active order in `assigned`..`delivery_in_progress` | `private:order.{active_public_id}` + `public:track.{tracking_token}` | `{order_public_id, lat, lng, heading, accuracy, recorded_at}` — tiny array, NOT a Resource |
+| `OrderStatusChanged` (existing) — add `ShouldBroadcast` + `$afterCommit = true` | Currently dispatched by `StateTransitionService` (line 80) and `ClaimService` (lines 61–62). **NOT yet dispatched by `AdminAssignmentService`** — Codex must add the dispatch in `AdminAssignmentService::assign()` and `::unassign()` as part of task 2.2 (see Phase 2 notes). | `private:order.{public_id}` | `{type, order: OrderForPartiesResource, transition: {from, to, changed_at}}` |
+| `OrderStatusChangedPublic` (new) — paired sibling for guest tracking | Dispatched right after `OrderStatusChanged` in the same dispatch sites | `public:track.{tracking_token}` | `{type, order: GuestTrackingResource, transition: {from, to, changed_at}}` |
+| `OrderDriverAssigned` (new) | Driver claims OR admin assigns | `private:order.{public_id}` + `public:track.{tracking_token}` | `{type, driver: DriverForOrderResource}` — sender-safe fields only |
+| `OrderDriverLocationUpdated` (new, **`ShouldBroadcastNow`**) | Every `POST /api/driver/location` (handled by `PresenceController::location()` → `PresenceService::updateLocation()`) while driver has an active order in `assigned`..`delivery_in_progress` | `private:order.{active_public_id}` + `public:track.{tracking_token}` | `{order_public_id, lat, lng, heading, accuracy, recorded_at}` — tiny array, NOT a Resource |
 
 ### 4.2 Driver-side — `private:driver.{driver_id}`
 
@@ -180,15 +198,20 @@ Codex must NOT start Phase 2 until Phase 1 is merged.
 4. **Pest unit tests for channel auth** at `tests/Unit/Broadcasting/ChannelAuthorizationTest.php` (positive + negative per callback).
 
 5. **Two foundation broadcast events:**
-   - `OrderBroadcastToDriver` — wired into `BroadcastService` + `EscalationService`
-   - `OrderBroadcastWithdrawn` — wired into `ClaimService` (on claim), `AdminAssignmentService` (on cancel/reassign), `EscalationService` (when tier escalates past)
+   - `OrderBroadcastToDriver` — wired into `BroadcastService` + `EscalationService`. Reuses existing `BroadcastOrderResource` (already broadcast-safe). `$afterCommit = true`.
+   - `OrderBroadcastWithdrawn` — wired into `ClaimService` (on claim), `AdminAssignmentService` (on cancel/reassign), `EscalationService` (when tier escalates past). Simple `{order_public_id, reason}` payload. `$afterCommit = true`.
 
-6. **Ops + dev scripts**
+6. **Broadcast-safe Resources** (per §4.0):
+   - `app/Http/Resources/Broadcast/OrderForPartiesResource.php`
+   - `app/Http/Resources/Broadcast/DriverForOrderResource.php`
+   - Verify `DriverAccountResource` is request-independent. If it branches on `$request->user()`, also create `app/Http/Resources/Broadcast/DriverAccountForBroadcastResource.php`. Otherwise document its safety in Phase 1 PR description.
+
+7. **Ops + dev scripts**
    - Update `composer dev` to launch Reverb alongside server/queue/vite
    - Write `docs/deployment/reverb-supervisor.conf.example`
    - Document the two queue workers (`default`, `broadcasts`)
 
-7. **PR:** `feat(realtime): phase 1 — reverb foundation + driver broadcast events`
+8. **PR:** `feat(realtime): phase 1 — reverb foundation + driver broadcast events + broadcast-safe resources`
    - **Codex reviews this PR.** Phase 2 begins only after merge.
 
 ---
@@ -200,22 +223,23 @@ Once Phase 1 is merged, Codex executes the tasks below. **All Phase 2 tasks are 
 **Template for each task:**
 - Create event class in `app/Events/`
 - Implement `ShouldBroadcast` (or `ShouldBroadcastNow` where noted)
+- **All events MUST set `public bool $afterCommit = true;`** — every existing dispatch site fires inside `DB::transaction()`. Without after-commit, clients can receive state that later rolls back. The only exception is events dispatched OUTSIDE a transaction (rare — `NotificationReceived` may be one); when in doubt, set `$afterCommit = true`.
 - `broadcastOn()` returns channel(s) per the events catalog
-- `broadcastWith()` builds payload via existing Resource (no new Resources unless explicitly needed — see "Codex must NOT" below)
+- `broadcastWith()` builds payload via the broadcast-safe Resource from §4.0 (no Resource that depends on `$request->user()`)
 - Wire dispatch site as specified
-- Pest unit test asserting `broadcastOn()` channels + `broadcastWith()` shape
+- Pest unit test asserting `broadcastOn()` channels + `broadcastWith()` shape, plus `$afterCommit === true` assertion
 
 #### Codex's task list
 
 | # | Event | Dispatch site | Channel(s) | Payload |
 |---|---|---|---|---|
-| 2.1a | Modify existing `OrderStatusChanged` → add `ShouldBroadcast`. **Private channel only.** | Already dispatched by `StateTransitionService`, `ClaimService`, `AdminAssignmentService`. DO NOT add new dispatch sites for THIS event. | `private:order.{order_public_id}` only | `OrderResource` |
-| 2.1b | New paired `OrderStatusChangedPublic` event for the guest tracking page | Same three sites as 2.1a — dispatch BOTH events side-by-side. This is the one exception to "no new dispatch sites" because it's a paired broadcast. Use `event(new OrderStatusChanged(...))` then `event(new OrderStatusChangedPublic(...))` in each site. | `public:track.{tracking_token}` only | `GuestTrackingResource` + same `transition` block |
-| 2.2 | New `OrderDriverAssigned` (one event, payload safe for both audiences) | `app/Services/Order/ClaimService.php` (after atomic claim success) AND `app/Services/Order/AdminAssignmentService.php` (after assign success) | `private:order.{order_public_id}` + `public:track.{tracking_token}` — one event, two channels | `{driver: DriverProfileResource}` only — sender-safe driver fields (name, photo, vehicle, rating). NO order payload here; sender/receiver already received the status change via 2.1. |
-| 2.3 | New `OrderDriverLocationUpdated` — **`ShouldBroadcastNow`** | `app/Http/Controllers/Api/Driver/LocationController.php` (after DB write). Find the driver's active order in `assigned`..`delivery_in_progress`; if none, do NOT dispatch. | `private:order.{active_order_public_id}` + `public:track.{tracking_token}` | Tiny custom array: `{lat, lng, heading, accuracy, recorded_at}` — NOT a Resource |
-| 2.4 | New `DriverAccountUpdated` | Every site that mutates `driver_accounts` balances: `DriverAccountLedgerService`, `CodeVerificationService` (delivery credit), `SettlementService::process()`. `SellerPayoutService` does NOT touch driver_accounts — skip it. | `private:driver.{driver_id}` | `DriverAccountResource` |
-| 2.5 | New `NotificationReceived` | Bind a listener to `Illuminate\Notifications\Events\NotificationSent` when channel is `database`. Single listener — no controller changes anywhere. | `private:user.{notifiable_id}` | Inline `{notification: {id, type, data, created_at}}` from the `DatabaseNotification` row |
-| 2.6 | New `SellerEarningCleared` | `app/Jobs/ClearSellerEarningsJob.php` (per row flipped, OR batched per seller — Codex picks; document the choice in the event class docblock) | `private:user.{seller_user_id}` | `SellerEarningResource` + computed `new_available_total` |
+| 2.1a | Modify existing `OrderStatusChanged` → add `ShouldBroadcast` + `$afterCommit = true`. **Private channel only.** | Already dispatched by `StateTransitionService` (line 80) and `ClaimService` (lines 61–62). Codex does NOT add new dispatch sites for `OrderStatusChanged` — but see 2.2 for the `AdminAssignmentService` gap. | `private:order.{order_public_id}` only | `OrderForPartiesResource` (created in Phase 1) |
+| 2.1b | New paired `OrderStatusChangedPublic` event for the guest tracking page. `$afterCommit = true`. | Same dispatch sites as 2.1a — dispatch BOTH events side-by-side. This is the one exception to "no new dispatch sites" because it's a paired broadcast. Use `event(new OrderStatusChanged(...))` then `event(new OrderStatusChangedPublic(...))` in each site. | `public:track.{tracking_token}` only | `GuestTrackingResource` + same `transition` block |
+| 2.2 | **Fix pre-existing dispatch gap + new `OrderDriverAssigned`** (one event, two channels, `$afterCommit = true`) | (a) `app/Services/Order/AdminAssignmentService.php::assign()` does NOT currently dispatch `OrderStatusChanged` — Codex must add `event(new OrderStatusChanged(...))` + `event(new OrderStatusChangedPublic(...))` inside the transaction (Laravel's `$afterCommit` defers them). Same for `::unassign()` (transitions to `awaiting_driver`). (b) Then dispatch `OrderDriverAssigned` in `ClaimService::claim()` (after atomic claim success) AND `AdminAssignmentService::assign()` (after assign success). | `private:order.{order_public_id}` + `public:track.{tracking_token}` — one event, two channels | `{driver: DriverForOrderResource}` (created in Phase 1) — sender-safe fields only. NO order payload here; parties already received the status change via 2.1. |
+| 2.3 | New `OrderDriverLocationUpdated` — **`ShouldBroadcastNow`**. Set `$afterCommit = true` only if `PresenceService::updateLocation()` runs inside a transaction (Codex verifies and decides). | `app/Services/Driver/PresenceService::updateLocation()` (after DB write). Find the driver's active order in `assigned`..`delivery_in_progress`; if none, do NOT dispatch. (Endpoint reached via `app/Http/Controllers/Api/Driver/PresenceController::location()` — but dispatch happens in the service, not the controller, per "logic in services, not controllers".) | `private:order.{active_order_public_id}` + `public:track.{tracking_token}` | Tiny custom array: `{lat, lng, heading, accuracy, recorded_at}` — NOT a Resource |
+| 2.4 | New `DriverAccountUpdated` (`$afterCommit = true`) | Every site that mutates `driver_accounts` balances: `DriverAccountLedgerService`, `CodeVerificationService` (delivery credit), `SettlementService::process()`. `SellerPayoutService` does NOT touch driver_accounts — skip it. | `private:driver.{driver_id}` | `DriverAccountResource` if Phase 1 verified it's request-independent. Otherwise use `Broadcast\DriverAccountForBroadcastResource`. |
+| 2.5 | New `NotificationReceived` | Bind a listener to `Illuminate\Notifications\Events\NotificationSent` when channel is `database`. Single listener — no controller changes anywhere. `$afterCommit = true` (safe default; notifications often fire inside transactions). | `private:user.{notifiable_id}` | Inline `{notification: {id, type, data, created_at}}` from the `DatabaseNotification` row |
+| 2.6 | New `SellerEarningCleared` (`$afterCommit = true`) | `app/Jobs/ClearSellerEarningsJob.php` (per row flipped, OR batched per seller — Codex picks; document the choice in the event class docblock) | `private:user.{seller_user_id}` | `SellerEarningResource` if request-independent (Codex verifies); else create broadcast variant in Phase 1-style pattern and raise with Claude before merge |
 
 #### Codex must NOT:
 
@@ -266,10 +290,19 @@ After Phase 2 is merged.
 
 If Codex hits any of these while implementing, **stop and ask Claude** rather than guessing:
 
-- Existing Resource is missing a field needed for a broadcast payload (e.g. `OrderResource` doesn't include `display_status` for receiver-side rendering)
-- Driver has multiple "active" orders at once (shouldn't be possible by current rules — but if data says otherwise, raise it)
-- `ClearSellerEarningsJob` should batch per-seller or per-row (document the choice you made if you decided)
-- Any case where the dispatch site requires a transaction-aware dispatch (`afterCommit()`) — if the DB write is inside `DB::transaction()`, the broadcast must use `afterCommit()` or it will fire before subscribers can see the new state
+- A broadcast-safe Resource defined in §4.0 turns out to be missing a field genuinely needed by client UIs (raise before adding — the goal is to keep these resources minimal and audience-neutral, not parity with `OrderResource`)
+- Driver has multiple "active" orders at once when computing `OrderDriverLocationUpdated`'s target order (shouldn't be possible by current rules — if data says otherwise, raise it)
+- `ClearSellerEarningsJob` per-row vs per-seller batching choice (Codex picks; document the choice you made — no need to raise unless ambiguous)
+
+### 9.1 Already-resolved corrections (do not relitigate)
+
+These were caught in Codex's pre-implementation review and are baked into the spec above:
+
+1. **`OrderResource` and `DriverProfileResource` cannot be used in queued broadcasts** — they branch on `$request->user()` / leak internals. See §4.0 for the broadcast-safe Resource policy and Phase 1 deliverable #6.
+2. **`AdminAssignmentService::assign()` and `::unassign()` do NOT currently dispatch `OrderStatusChanged`** — pre-existing gap. Codex fixes this in task 2.2.
+3. **Location endpoint is `PresenceController::location()` → `PresenceService::updateLocation()`**, not `LocationController`. Dispatch happens in the service. See task 2.3.
+4. **All broadcast events must set `$afterCommit = true`** because all known dispatch sites run inside `DB::transaction()`. See Phase 2 template.
+5. **The existing e2e suite is 32 scenarios, not 31.** Spec corrected.
 
 ---
 
@@ -279,7 +312,7 @@ If Codex hits any of these while implementing, **stop and ask Claude** rather th
 - [ ] Phase 2 PR merged + reviewed by Claude
 - [ ] Phase 3 PR merged (docs + smoke)
 - [ ] All Pest tests green
-- [ ] `scripts/orders-e2e.php` 31 scenarios still pass (no regressions)
+- [ ] `scripts/orders-e2e.php` 32 scenarios still pass (no regressions)
 - [ ] `scripts/realtime-smoke.php` passes
 - [ ] Pint clean on all touched files
 - [ ] Security review pass complete (Claude)
