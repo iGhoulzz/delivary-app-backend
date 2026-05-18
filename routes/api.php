@@ -17,16 +17,25 @@ use App\Http\Controllers\Api\Driver\Order\BroadcastController as DriverOrderBroa
 use App\Http\Controllers\Api\Driver\Order\ClaimController as DriverOrderClaimController;
 use App\Http\Controllers\Api\Driver\Order\ConfirmDeliveryController as DriverOrderConfirmDeliveryController;
 use App\Http\Controllers\Api\Driver\Order\ConfirmPickupController as DriverOrderConfirmPickupController;
+use App\Http\Controllers\Api\Driver\Order\MarkDeliveryFailedController as DriverOrderMarkDeliveryFailedController;
 use App\Http\Controllers\Api\Driver\PresenceController as DriverPresenceController;
 use App\Http\Controllers\Api\Driver\ProfileController as DriverViewProfileController;
 use App\Http\Controllers\Api\Driver\RegionController as DriverRegionController;
+use App\Http\Controllers\Api\Driver\Settlement\ListSettlementsController;
+use App\Http\Controllers\Api\Driver\Settlement\ShowSettlementController;
 use App\Http\Controllers\Api\Me\Driver\DriverProfileController as MeDriverProfileController;
 use App\Http\Controllers\Api\Me\Driver\PreregistrationController;
 use App\Http\Controllers\Api\Me\Order\CancelController;
 use App\Http\Controllers\Api\Me\Order\GeofenceConfirmController;
 use App\Http\Controllers\Api\Me\Order\RetryController;
+use App\Http\Controllers\Api\Me\Settlement\ListSellerPayoutsController;
+use App\Http\Controllers\Api\Me\Settlement\ShowEarningsController;
+use App\Http\Controllers\Api\Me\Settlement\ShowSellerPayoutController;
 use App\Http\Controllers\Api\Office\DriverDocumentController;
 use App\Http\Controllers\Api\Office\DriverOnboardingController;
+use App\Http\Controllers\Api\Office\Order\OrderController as OfficeOrderController;
+use App\Http\Controllers\Api\Office\Order\ReceiveReturnController as OfficeOrderReceiveReturnController;
+use App\Http\Controllers\Api\Office\Order\RetrieveOrderController as OfficeOrderRetrieveOrderController;
 use App\Http\Controllers\Api\Order\OrderController;
 use App\Http\Controllers\Api\Order\QuoteController;
 use App\Http\Controllers\Api\Profile\ProfileController;
@@ -90,6 +99,14 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function (): void {
             ->middleware('throttle:me_action');
     });
 
+    Route::get('earnings', ShowEarningsController::class)
+        ->name('me.earnings.show')
+        ->middleware('throttle:seller_earnings_read');
+    Route::get('seller-payouts', ListSellerPayoutsController::class)
+        ->name('me.seller-payouts.index');
+    Route::get('seller-payouts/{sellerPayout:public_id}', ShowSellerPayoutController::class)
+        ->name('me.seller-payouts.show');
+
     // Driver self-service: existing-user pre-registration as a driver
     Route::prefix('driver')->group(function (): void {
         Route::get('/', [MeDriverProfileController::class, 'show']);
@@ -119,6 +136,37 @@ Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/drivers
     Route::delete('{driverProfile}/documents/{driverDocument}', [DriverDocumentController::class, 'destroy']);
 });
 
+Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/orders')->group(function (): void {
+    Route::get('/', [OfficeOrderController::class, 'index'])
+        ->middleware('throttle:office_orders_read');
+    Route::get('{order:public_id}', [OfficeOrderController::class, 'show'])
+        ->middleware('throttle:office_orders_read');
+    Route::post('{order:public_id}/receive-return', OfficeOrderReceiveReturnController::class)
+        ->middleware('throttle:office_action');
+    Route::post('{order:public_id}/retrieve', OfficeOrderRetrieveOrderController::class)
+        ->middleware('throttle:office_action');
+});
+
+// ─── /office — settlement & seller payouts ──────────────────────────────
+Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office')->group(function (): void {
+    Route::get('drivers/{driverPublicId}/settlement-preview', \App\Http\Controllers\Api\Office\Settlement\PreviewSettlementController::class)
+        ->name('office.settlements.preview');
+
+    Route::post('settlements', \App\Http\Controllers\Api\Office\Settlement\ProcessSettlementController::class)
+        ->middleware('throttle:office_settlement')
+        ->name('office.settlements.process');
+    Route::get('settlements', \App\Http\Controllers\Api\Office\Settlement\ListSettlementsController::class)
+        ->name('office.settlements.index');
+
+    Route::get('seller-payouts/lookup', \App\Http\Controllers\Api\Office\Settlement\LookupSellerPayoutController::class)
+        ->name('office.seller-payouts.lookup');
+    Route::post('seller-payouts', \App\Http\Controllers\Api\Office\Settlement\ProcessSellerPayoutController::class)
+        ->middleware('throttle:office_payout')
+        ->name('office.seller-payouts.process');
+    Route::get('seller-payouts', \App\Http\Controllers\Api\Office\Settlement\ListSellerPayoutsController::class)
+        ->name('office.seller-payouts.index');
+});
+
 // ─── /admin/drivers — admin driver lifecycle management ─────────────────
 Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/drivers')->group(function (): void {
     Route::get('/', [AdminDriverController::class, 'index']);
@@ -135,11 +183,32 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/orders')->group
     Route::get('{order:public_id}', [AdminOrderController::class, 'show']);
     Route::post('{order:public_id}/assign', [AdminOrderController::class, 'assign']);
     Route::post('{order:public_id}/unassign', [AdminOrderController::class, 'unassign']);
+    Route::post('{order:public_id}/cancel', [AdminOrderController::class, 'cancel']);
+    Route::post('{order:public_id}/mark-delivery-failed', [AdminOrderController::class, 'markDeliveryFailed']);
+    Route::post('{order:public_id}/redirect-return', [AdminOrderController::class, 'redirectReturn']);
+    Route::post('{order:public_id}/waive-retrieval-fees', [AdminOrderController::class, 'waiveRetrievalFees']);
+});
+
+// ─── /admin — settlement & seller payouts ───────────────────────────────
+Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(function (): void {
+    Route::get('settlements', \App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController::class)
+        ->name('admin.settlements.index');
+    Route::get('settlements/{settlement:public_id}', \App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController::class)
+        ->name('admin.settlements.show');
+    Route::post('settlements/{settlement:public_id}/reverse', \App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController::class)
+        ->name('admin.settlements.reverse');
+
+    Route::get('seller-payouts', \App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController::class)
+        ->name('admin.seller-payouts.index');
 });
 
 Route::middleware(['auth:sanctum', 'role:driver'])->prefix('driver')->group(function (): void {
     Route::get('profile', DriverViewProfileController::class);
     Route::get('account', DriverAccountController::class);
+    Route::get('settlements', ListSettlementsController::class)
+        ->name('driver.settlements.index');
+    Route::get('settlements/{settlement:public_id}', ShowSettlementController::class)
+        ->name('driver.settlements.show');
     Route::get('regions', [DriverRegionController::class, 'index']);
     Route::patch('regions', [DriverRegionController::class, 'update']);
     Route::post('go-online', [DriverPresenceController::class, 'goOnline'])
@@ -161,6 +230,8 @@ Route::middleware(['auth:sanctum', 'role:driver'])->prefix('driver')->group(func
         Route::post('{order:public_id}/arrived-dropoff', DriverOrderArrivedDropoffController::class)
             ->middleware('throttle:driver_action');
         Route::post('{order:public_id}/confirm-delivery', DriverOrderConfirmDeliveryController::class)
+            ->middleware('throttle:driver_action');
+        Route::post('{order:public_id}/mark-delivery-failed', DriverOrderMarkDeliveryFailedController::class)
             ->middleware('throttle:driver_action');
     });
 });
