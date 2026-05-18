@@ -14,20 +14,27 @@ use App\Enums\DriverActivityStatus;
 use App\Enums\OrderActorType;
 use App\Enums\OrderErrorCode;
 use App\Enums\OrderStatus;
+use App\Enums\OrderType;
 use App\Enums\PickupMethod;
+use App\Enums\SellerEarningStatus;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\DriverAccount;
 use App\Models\DriverAccountTransaction;
 use App\Models\DriverProfile;
 use App\Models\Order;
 use App\Models\PlatformSetting;
+use App\Models\SellerEarning;
 use App\Models\User;
+use App\Services\Driver\DriverAccountLedgerService;
 use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Support\Facades\DB;
 
 final class CodeVerificationService
 {
-    public function __construct(private readonly StateTransitionService $transitions) {}
+    public function __construct(
+        private readonly StateTransitionService $transitions,
+        private readonly DriverAccountLedgerService $ledger,
+    ) {}
 
     /**
      * Generate a pickup/delivery pair guaranteed distinct for the same order.
@@ -158,6 +165,7 @@ final class CodeVerificationService
             );
 
             $this->applyDriverDeliveryFinancials($driver, $updated);
+            $this->spawnSellerEarning($updated);
 
             DriverProfile::query()
                 ->where('user_id', $driver->id)
@@ -269,23 +277,42 @@ final class CodeVerificationService
             $this->mutateBucket($account, DriverAccountBucket::CashToDeposit, $cash, DriverAccountTransactionReason::OrderCompleted, $order);
         }
 
-        $earnings = bcsub((string) $order->delivery_fee, (string) $order->driver_fee_cut_amount, 2);
-        if (bccomp($earnings, '0.00', 2) !== 1) {
+        $this->ledger->applyDeliveryCompletionCredit($driver, $order);
+    }
+
+    /**
+     * For sale orders (p2p_sale, merchant_delivery) with a non-zero item_price,
+     * spawn the SellerEarning row that carries the seller-side lifecycle through
+     * pending_settlement → pending_clearance → available → paid_out. Settlement
+     * milestone (2026-05-17). No row is created for non-sale orders or for sale
+     * orders with item_price = 0.
+     */
+    private function spawnSellerEarning(Order $order): void
+    {
+        if (! in_array($order->order_type, [OrderType::P2pSale, OrderType::MerchantDelivery], true)) {
             return;
         }
 
-        if (bccomp((string) $account->debt_balance, '0.00', 2) === 1) {
-            $offset = bccomp((string) $account->debt_balance, $earnings, 2) === 1
-                ? $earnings
-                : (string) $account->debt_balance;
-
-            $this->mutateBucket($account, DriverAccountBucket::DebtBalance, bcmul($offset, '-1', 2), DriverAccountTransactionReason::DebtOffset, $order);
-            $earnings = bcsub($earnings, $offset, 2);
+        if (bccomp((string) $order->item_price, '0.00', 2) !== 1) {
+            return;
         }
 
-        if (bccomp($earnings, '0.00', 2) === 1) {
-            $this->mutateBucket($account, DriverAccountBucket::EarningsBalance, $earnings, DriverAccountTransactionReason::OrderCompleted, $order);
+        $sellerProceeds = bcsub(
+            (string) $order->item_price,
+            (string) $order->commission_amount,
+            2,
+        );
+
+        if (bccomp($sellerProceeds, '0.00', 2) !== 1) {
+            return;
         }
+
+        SellerEarning::create([
+            'order_id' => $order->id,
+            'seller_user_id' => $order->sender_user_id,
+            'amount' => $sellerProceeds,
+            'status' => SellerEarningStatus::PendingSettlement->value,
+        ]);
     }
 
     private function addPickupCashToDriverAccount(User $driver, Order $order): void
