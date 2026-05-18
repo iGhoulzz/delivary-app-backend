@@ -4,21 +4,29 @@ declare(strict_types=1);
 
 namespace App\Services\Order;
 
+use App\Enums\DriverAccountTransactionReason;
 use App\Enums\DriverActivityStatus;
 use App\Enums\DriverStatus;
+use App\Enums\DriverStrikeIssuer;
+use App\Enums\DriverStrikeReason;
 use App\Enums\OrderActorType;
 use App\Enums\OrderErrorCode;
 use App\Enums\OrderStatus;
 use App\Enums\VehicleType;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\DriverProfile;
+use App\Models\DriverStrike;
 use App\Models\Order;
 use App\Models\OrderStatusLog;
+use App\Models\PlatformSetting;
 use App\Models\User;
+use App\Services\Driver\DriverAccountLedgerService;
 use Illuminate\Support\Facades\DB;
 
 final class AdminAssignmentService
 {
+    public function __construct(private readonly DriverAccountLedgerService $driverLedger) {}
+
     public function assign(User $admin, Order $order, User $driver, bool $force = false): Order
     {
         return DB::transaction(function () use ($admin, $order, $driver, $force): Order {
@@ -94,9 +102,16 @@ final class AdminAssignmentService
         });
     }
 
-    public function unassign(User $admin, Order $order, ?string $reason = null, bool $resetTier = true): Order
-    {
-        return DB::transaction(function () use ($admin, $order, $reason, $resetTier): Order {
+    public function unassign(
+        User $admin,
+        Order $order,
+        ?string $reason = null,
+        bool $resetTier = true,
+        bool $driverFault = false,
+        ?string $notes = null,
+        ?string $feeAmountOverride = null,
+    ): Order {
+        return DB::transaction(function () use ($admin, $order, $reason, $resetTier, $driverFault, $notes, $feeAmountOverride): Order {
             $order = $order->refresh();
 
             if (! in_array($order->status, [OrderStatus::Assigned, OrderStatus::DriverEnRoutePickup], true) || $order->driver_id === null) {
@@ -108,6 +123,7 @@ final class AdminAssignmentService
 
             $from = $order->status;
             $driverId = $order->driver_id;
+            $driver = User::query()->findOrFail($driverId);
             $now = now();
             $updates = [
                 'driver_id' => null,
@@ -124,17 +140,45 @@ final class AdminAssignmentService
 
             Order::query()->whereKey($order->id)->update($updates);
 
+            if ($driverFault) {
+                $feeAmount = $feeAmountOverride !== null
+                    ? number_format((float) $feeAmountOverride, 2, '.', '')
+                    : number_format((float) PlatformSetting::get('cancellation.driver_accept_then_cancel_fee', 0), 2, '.', '');
+
+                $strike = DriverStrike::create([
+                    'driver_id' => $driverId,
+                    'order_id' => $order->id,
+                    'reason' => DriverStrikeReason::AcceptThenCancel->value,
+                    'fee_amount' => $feeAmount,
+                    'issued_by' => DriverStrikeIssuer::System->value,
+                    'issued_by_admin_id' => null,
+                    'notes' => $notes,
+                ]);
+
+                $this->driverLedger->applyFee(
+                    $driver,
+                    $feeAmount,
+                    DriverAccountTransactionReason::StrikeFee,
+                    $strike,
+                    $admin->id,
+                    $notes,
+                );
+            }
+
             DriverProfile::query()
                 ->where('user_id', $driverId)
                 ->update([
-                    'activity_status' => DriverActivityStatus::Online->value,
+                    'activity_status' => $driverFault
+                        ? DriverActivityStatus::Offline->value
+                        : DriverActivityStatus::Online->value,
                     'last_active_at' => $now,
                 ]);
 
             $this->log($order, $from, OrderStatus::AwaitingDriver, $admin, [
-                'event' => 'admin_unassign',
+                'event' => $driverFault ? 'admin_unassign_driver_fault' : 'admin_unassign',
                 'driver_id' => $driverId,
                 'reset_tier' => $resetTier,
+                'driver_fault' => $driverFault,
             ], $reason);
 
             return $order->refresh()->load(['driver.driverProfile', 'statusLogs']);

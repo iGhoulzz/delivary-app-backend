@@ -22,6 +22,7 @@ final class OfficeInventory extends Model
         'received_by_staff_id', 'received_at', 'shelf_location',
         'accrued_storage_fee', 'last_fee_accrued_on',
         'retrieved_at', 'retrieved_by_staff_id',
+        'cash_collected_at_retrieval', 'retrieval_fees_waived_amount',
         'abandoned_at', 'abandoned_by_admin_id', 'disposal_notes',
         'notes',
     ];
@@ -49,6 +50,8 @@ final class OfficeInventory extends Model
             'abandoned_at' => 'datetime',
             'last_fee_accrued_on' => 'date',
             'accrued_storage_fee' => 'decimal:2',
+            'cash_collected_at_retrieval' => 'decimal:2',
+            'retrieval_fees_waived_amount' => 'decimal:2',
         ];
     }
 

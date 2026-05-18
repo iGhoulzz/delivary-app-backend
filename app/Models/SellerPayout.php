@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Enums\SellerPayoutMethod;
 use App\Enums\SellerPayoutStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
@@ -20,20 +21,21 @@ final class SellerPayout extends Model
     protected $fillable = [
         'public_id', 'user_id', 'amount',
         'payout_method', 'office_id',
-        'status', 'requested_at',
-        'approved_at', 'approved_by_admin_id',
-        'paid_at', 'paid_by_admin_id',
-        'rejected_at', 'rejected_by_admin_id', 'rejection_reason',
+        'status',
+        'paid_at', 'paid_by_staff_id',
         'notes',
     ];
 
     protected static function booted(): void
     {
-        self::creating(static function (SellerPayout $p): void {
-            if (empty($p->public_id)) {
-                $p->public_id = (string) Str::ulid();
+        self::creating(static function (SellerPayout $payout): void {
+            if (empty($payout->public_id)) {
+                $payout->public_id = (string) Str::ulid();
             }
-            $p->requested_at ??= now();
+
+            $payout->paid_at ??= now();
+            $payout->status ??= SellerPayoutStatus::Paid->value;
+            $payout->payout_method ??= 'cash_at_office';
         });
     }
 
@@ -46,12 +48,8 @@ final class SellerPayout extends Model
     {
         return [
             'status' => SellerPayoutStatus::class,
-            'payout_method' => SellerPayoutMethod::class,
             'amount' => 'decimal:2',
-            'requested_at' => 'datetime',
-            'approved_at' => 'datetime',
             'paid_at' => 'datetime',
-            'rejected_at' => 'datetime',
         ];
     }
 
@@ -65,29 +63,22 @@ final class SellerPayout extends Model
         return $this->belongsTo(OfficeLocation::class, 'office_id');
     }
 
-    public function approvedByAdmin(): BelongsTo
+    public function paidByStaff(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'approved_by_admin_id');
+        return $this->belongsTo(User::class, 'paid_by_staff_id');
     }
 
-    public function paidByAdmin(): BelongsTo
+    public function orders(): BelongsToMany
     {
-        return $this->belongsTo(User::class, 'paid_by_admin_id');
+        return $this->belongsToMany(Order::class, 'seller_payout_orders', 'seller_payout_id', 'order_id')
+            ->using(SellerPayoutOrder::class)
+            ->withPivot(['amount_contributed'])
+            ->withTimestamps();
     }
 
-    public function rejectedByAdmin(): BelongsTo
+    public function earnings(): HasMany
     {
-        return $this->belongsTo(User::class, 'rejected_by_admin_id');
-    }
-
-    public function isOpen(): bool
-    {
-        return $this->status->isOpen();
-    }
-
-    public function isTerminal(): bool
-    {
-        return $this->status->isTerminal();
+        return $this->hasMany(SellerEarning::class, 'seller_payout_id');
     }
 
     public function scopeForUser(Builder $query, int $userId): Builder
@@ -95,16 +86,8 @@ final class SellerPayout extends Model
         return $query->where('user_id', $userId);
     }
 
-    public function scopeWithStatus(Builder $query, SellerPayoutStatus ...$statuses): Builder
+    public function scopeAtOffice(Builder $query, int $officeId): Builder
     {
-        return $query->whereIn('status', array_map(static fn (SellerPayoutStatus $s): string => $s->value, $statuses));
-    }
-
-    public function scopeOpen(Builder $query): Builder
-    {
-        return $query->whereIn('status', [
-            SellerPayoutStatus::Pending->value,
-            SellerPayoutStatus::Approved->value,
-        ]);
+        return $query->where('office_id', $officeId);
     }
 }

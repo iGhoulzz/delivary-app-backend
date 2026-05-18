@@ -159,7 +159,7 @@ final class PresenceService
     {
         return Order::query()
             ->forDriver($driver->id)
-            ->active()
+            ->activeForDriver()
             ->exists();
     }
 

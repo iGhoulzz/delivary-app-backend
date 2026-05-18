@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Order;
 
+use App\Enums\DeliveryFeeStatus;
 use App\Enums\OrderStatus;
+use App\Enums\ReturnFault;
 use App\Models\Order;
+use App\Services\Order\StorageFeeCalculator;
 use App\Support\OrderDisplayStatus;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -65,6 +68,7 @@ final class OrderResource extends JsonResource
             ],
 
             'driver' => $this->driverBlock($o, $isSender, $isReceiver),
+            'return' => $this->returnBlock($o, $isSender),
 
             'timestamps' => [
                 'assigned_at' => $o->assigned_at?->toIso8601String(),
@@ -75,6 +79,56 @@ final class OrderResource extends JsonResource
                 'cancelled_at' => $o->cancelled_at?->toIso8601String(),
             ],
         ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function returnBlock(Order $o, bool $isSender): ?array
+    {
+        if (! in_array($o->status, [
+            OrderStatus::DeliveryFailed,
+            OrderStatus::ReturningToOffice,
+            OrderStatus::AtOffice,
+            OrderStatus::RetrievedBySeller,
+            OrderStatus::Abandoned,
+        ], true)) {
+            return null;
+        }
+
+        $base = [
+            'reason' => $o->return_reason?->value,
+            'fault' => $o->return_fault?->value,
+            'office_id' => $o->return_office_id,
+            'returned_to_office_at' => $o->returned_to_office_at?->toIso8601String(),
+            'retrieved_by_seller_at' => $o->retrieved_by_seller_at?->toIso8601String(),
+            'abandoned_at' => $o->abandoned_at?->toIso8601String(),
+            'storage_fee_accrued' => (string) $o->storage_fee_accrued,
+        ];
+
+        if ($isSender && $o->status === OrderStatus::AtOffice) {
+            $inventory = $o->officeInventory;
+            if ($inventory !== null) {
+                $storage = app(StorageFeeCalculator::class)->compute($inventory);
+                $delivery = ($o->delivery_fee_status !== DeliveryFeeStatus::Paid
+                    && in_array($o->return_fault, [ReturnFault::Sender, ReturnFault::Receiver], true))
+                    ? (string) $o->delivery_fee
+                    : '0.00';
+                $waived = (string) $inventory->retrieval_fees_waived_amount;
+                $total = bcsub(bcadd($delivery, $storage, 2), $waived, 2);
+
+                if (bccomp($total, '0.00', 2) === -1) {
+                    $total = '0.00';
+                }
+
+                $base['owed_at_retrieval'] = [
+                    'delivery_fee' => $delivery,
+                    'storage_fee_live' => $storage,
+                    'waived' => $waived,
+                    'total' => $total,
+                ];
+            }
+        }
+
+        return $base;
     }
 
     /** @return array<string, mixed>|null */

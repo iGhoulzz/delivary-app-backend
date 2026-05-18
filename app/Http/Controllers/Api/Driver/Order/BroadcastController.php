@@ -28,7 +28,7 @@ final class BroadcastController extends Controller
         $order = Order::query()
             ->with(['driver.driverProfile'])
             ->forDriver($request->user()->id)
-            ->active()
+            ->activeForDriver()
             ->latest('status_changed_at')
             ->first();
 

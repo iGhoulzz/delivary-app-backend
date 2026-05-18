@@ -218,7 +218,17 @@ final class Order extends Model
             ->withTimestamps();
     }
 
+    public function sellerEarning(): HasOne
+    {
+        return $this->hasOne(SellerEarning::class);
+    }
+
     public function inventory(): HasOne
+    {
+        return $this->hasOne(OfficeInventory::class);
+    }
+
+    public function officeInventory(): HasOne
     {
         return $this->hasOne(OfficeInventory::class);
     }
@@ -305,6 +315,19 @@ final class Order extends Model
             static fn (OrderStatus $s): string => $s->value,
             array_filter(OrderStatus::cases(), static fn (OrderStatus $s): bool => $s->isTerminal())
         ));
+    }
+
+    public function scopeActiveForDriver(Builder $query): Builder
+    {
+        return $query->whereIn('status', [
+            OrderStatus::Assigned->value,
+            OrderStatus::DriverEnRoutePickup->value,
+            OrderStatus::PickedUp->value,
+            OrderStatus::DriverEnRouteDropoff->value,
+            OrderStatus::DeliveryInProgress->value,
+            OrderStatus::DeliveryFailed->value,
+            OrderStatus::ReturningToOffice->value,
+        ]);
     }
 
     public function scopeForDriver(Builder $query, int $driverId): Builder

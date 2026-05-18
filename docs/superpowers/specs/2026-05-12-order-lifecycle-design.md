@@ -1,7 +1,7 @@
 # Order Lifecycle (Sub-Projects A + B) — Design Spec
 
 **Date:** 2026-05-12
-**Status:** 🟡 Approved, awaiting implementation plan
+**Status:** ✅ Implemented (2026-05-12) — A+B shipped via Claude Tasks 1–6 + Codex Slices 1–9; Slice 10 also delivered pre-pickup pieces of sub-project C (sender pre-pickup cancel + admin pre-pickup cancel + driver-fault unassign with strike).
 **Scope:** End-to-end happy path of an order — from sender creating it (with a server-validated price quote), through driver discovery and atomic claim, through all in-transit transitions, to a delivered terminal state. Includes pricing computation, broadcast & atomic claim, the 6-digit pickup/delivery code system with a kill-switch and geofence fallback, driver presence (going online/offline + location updates), sender retry from `no_driver_available`, and admin manual assign/unassign for early-launch reality where drivers are sparse.
 
 **Out of scope (deliberately deferred to subsequent milestones):**

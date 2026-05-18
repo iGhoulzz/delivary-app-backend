@@ -18,7 +18,7 @@ final class CancelController extends Controller
     {
         $this->authorize('cancelByUser', $order);
 
-        return new OrderResource($this->cancellations->cancelByUserFromNoDriver(
+        return new OrderResource($this->cancellations->cancelByUser(
             $request->user(),
             $order,
             $request->input('reason'),

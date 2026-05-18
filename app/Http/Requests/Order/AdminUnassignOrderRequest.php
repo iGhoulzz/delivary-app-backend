@@ -21,6 +21,9 @@ final class AdminUnassignOrderRequest extends FormRequest
         return [
             'reason' => ['sometimes', 'string', 'max:500'],
             'reset_tier' => ['sometimes', 'boolean'],
+            'driver_fault' => ['sometimes', 'boolean'],
+            'notes' => ['sometimes', 'string', 'max:1000'],
+            'fee_amount_override' => ['sometimes', 'numeric', 'min:0', 'max:999999.99'],
         ];
     }
 }

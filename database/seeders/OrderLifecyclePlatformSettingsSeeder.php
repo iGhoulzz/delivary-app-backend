@@ -49,6 +49,21 @@ final class OrderLifecyclePlatformSettingsSeeder extends Seeder
 
             // Quote
             ['key' => 'quote.ttl_seconds', 'type' => 'integer', 'value' => 300],
+
+            // Cancellation
+            ['key' => 'cancellation.user_pre_pickup_fee', 'type' => 'decimal', 'value' => 0.00, 'description' => 'Sender cancellation fee for assigned pre-pickup orders; unresolved business amount defaults to zero'],
+            ['key' => 'cancellation.driver_accept_then_cancel_fee', 'type' => 'decimal', 'value' => 0.00, 'description' => 'Driver strike fee for accept-then-cancel support cases; unresolved business amount defaults to zero'],
+
+            // Settlement / payouts
+            ['key' => 'payouts.clearance_hours', 'type' => 'integer', 'value' => 48, 'description' => 'Hours between settlement and earning becoming available to seller'],
+            ['key' => 'payouts.min_amount', 'type' => 'decimal', 'value' => 20.00, 'description' => 'Minimum amount (LYD) for a single seller payout'],
+            ['key' => 'payouts.allow_partial', 'type' => 'boolean', 'value' => true, 'description' => 'Whether sellers may collect a subset of available earnings in one visit'],
+            ['key' => 'settlement.reverse_window_hours', 'type' => 'integer', 'value' => '', 'description' => 'Optional hard cap (hours) for admin settlement reversal; empty = no cap, only earnings-state check applies'],
+
+            // Storage / abandonment
+            ['key' => 'storage.grace_days', 'type' => 'integer', 'value' => 5, 'description' => 'Free storage days from at_office_at before fees start accruing'],
+            ['key' => 'storage.daily_fee', 'type' => 'decimal', 'value' => 1.00, 'description' => 'LYD per day after the grace period, charged to seller at retrieval'],
+            ['key' => 'storage.abandonment_days', 'type' => 'integer', 'value' => 30, 'description' => 'Days from at_office_at before the daily cron flips an order to abandoned'],
         ];
 
         foreach ($defaults as $row) {

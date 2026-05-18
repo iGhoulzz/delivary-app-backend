@@ -40,12 +40,23 @@ enum OrderErrorCode: string
     case DriverBlockedByDebt = 'driver_blocked_by_debt';
     case VehicleMismatch = 'vehicle_mismatch';
     case DriverRegionMismatch = 'driver_region_mismatch';
+    case OrderNotFailable = 'order_not_failable';
+    case OrderNotReceivable = 'order_not_receivable';
+    case OrderNotRetrievable = 'order_not_retrievable';
+    case OrderNotWaivable = 'order_not_waivable';
+    case OrderNotRedirectable = 'order_not_redirectable';
+    case WrongOfficeForOrder = 'wrong_office_for_order';
+    case NoReturnOfficeAvailable = 'no_return_office_available';
+    case InsufficientCashCollected = 'insufficient_cash_collected';
+    case ExcessCashCollected = 'excess_cash_collected';
+    case OfficeInactive = 'office_inactive';
 
     public function httpStatus(): int
     {
         return match ($this) {
             self::PickupOutOfServiceArea, self::InvalidQuoteToken => 400,
-            self::NotYourOrder => 403,
+            self::NotYourOrder,
+            self::WrongOfficeForOrder => 403,
             self::SenderIsReceiver,
             self::MerchantUseMerchantFlow,
             self::InvalidPickupCode,
@@ -58,7 +69,11 @@ enum OrderErrorCode: string
             self::DriverOutOfServiceArea,
             self::DriverLiabilityInsufficient,
             self::VehicleMismatch,
-            self::DriverRegionMismatch => 422,
+            self::DriverRegionMismatch,
+            self::NoReturnOfficeAvailable,
+            self::InsufficientCashCollected,
+            self::ExcessCashCollected,
+            self::OfficeInactive => 422,
             self::QuotePriceChanged,
             self::IdempotencyConflict,
             self::OrderAlreadyClaimed,
@@ -74,7 +89,12 @@ enum OrderErrorCode: string
             self::DriverLiabilityMax,
             self::DriverHasActiveOrder,
             self::DriverLocationStale,
-            self::DriverBlockedByDebt => 409,
+            self::DriverBlockedByDebt,
+            self::OrderNotFailable,
+            self::OrderNotReceivable,
+            self::OrderNotRetrievable,
+            self::OrderNotWaivable,
+            self::OrderNotRedirectable => 409,
             self::QuoteExpired => 410,
             self::CodeLocked => 429,
         };

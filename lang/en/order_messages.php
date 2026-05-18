@@ -48,4 +48,16 @@ return [
     // Admin
     'vehicle_mismatch' => 'Vehicle type does not match item size.',
     'driver_region_mismatch' => 'Driver is not assigned to the pickup region.',
+
+    // Failed delivery / return-to-office
+    'order_not_failable' => 'This order cannot be marked failed in its current state.',
+    'order_not_receivable' => 'This order cannot be received at office in its current state.',
+    'order_not_retrievable' => 'This order cannot be retrieved in its current state.',
+    'order_not_waivable' => 'Retrieval fees can only be waived while the order is at office.',
+    'order_not_redirectable' => 'This order cannot be redirected to another office in its current state.',
+    'wrong_office_for_order' => 'This order is bound for a different office.',
+    'no_return_office_available' => 'No active office could be resolved for this return.',
+    'insufficient_cash_collected' => 'Cash collected is less than the amount owed.',
+    'excess_cash_collected' => 'Cash collected is more than the amount owed.',
+    'office_inactive' => 'Target office is not active.',
 ];

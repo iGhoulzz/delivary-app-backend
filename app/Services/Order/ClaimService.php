@@ -67,7 +67,7 @@ final class ClaimService
 
     private function assertDriverCanClaim(User $driver, DriverProfile $profile, Order $order): void
     {
-        if ($driver->deliveredOrders()->active()->exists()) {
+        if ($driver->deliveredOrders()->activeForDriver()->exists()) {
             throw new OrderDomainException(
                 OrderErrorCode::DriverHasActiveOrder,
                 trans('order_messages.driver_has_active_order'),

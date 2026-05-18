@@ -120,11 +120,51 @@ final class AppServiceProvider extends ServiceProvider
                 ->response($this->throttleResponseCallback());
         });
 
+        RateLimiter::for('office_orders_read', function (Request $request): Limit {
+            $userId = (string) (optional($request->user())->id ?? '');
+
+            return Limit::perMinute(60)
+                ->by('office_orders_read:'.$userId)
+                ->response($this->throttleResponseCallback());
+        });
+
+        RateLimiter::for('office_action', function (Request $request): Limit {
+            $userId = (string) (optional($request->user())->id ?? '');
+
+            return Limit::perMinute(10)
+                ->by('office_action:'.$userId)
+                ->response($this->throttleResponseCallback());
+        });
+
+        RateLimiter::for('office_settlement', function (Request $request): Limit {
+            $key = (string) ($request->user()?->id ?? $request->ip());
+
+            return Limit::perMinute(60)
+                ->by('office_settlement:'.$key)
+                ->response($this->throttleResponseCallback());
+        });
+
+        RateLimiter::for('office_payout', function (Request $request): Limit {
+            $key = (string) ($request->user()?->id ?? $request->ip());
+
+            return Limit::perMinute(60)
+                ->by('office_payout:'.$key)
+                ->response($this->throttleResponseCallback());
+        });
+
         RateLimiter::for('me_action', function (Request $request): Limit {
             $userId = (string) (optional($request->user())->id ?? '');
 
             return Limit::perMinute(10)
                 ->by('me_action:'.$userId)
+                ->response($this->throttleResponseCallback());
+        });
+
+        RateLimiter::for('seller_earnings_read', function (Request $request): Limit {
+            $key = (string) ($request->user()?->id ?? $request->ip());
+
+            return Limit::perMinute(30)
+                ->by('seller_earnings_read:'.$key)
                 ->response($this->throttleResponseCallback());
         });
 
