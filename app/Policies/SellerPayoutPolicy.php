@@ -7,6 +7,16 @@ namespace App\Policies;
 use App\Models\SellerPayout;
 use App\Models\User;
 
+/**
+ * Authorisation for SellerPayout.
+ *
+ * Sellers do not have a distinct Spatie role on this platform — see
+ * {@see \App\Policies\SellerEarningPolicy} for the rationale. The
+ * `viewBySeller` method therefore authorises by FK ownership alone
+ * (`user_id` match), while the office_staff and admin methods on this
+ * policy do gate by role. This asymmetry is intentional and mirrors
+ * {@see \App\Policies\OrderPolicy}.
+ */
 final class SellerPayoutPolicy
 {
     public function process(User $staff): bool
