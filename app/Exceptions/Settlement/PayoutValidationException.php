@@ -10,7 +10,7 @@ use RuntimeException;
 final class PayoutValidationException extends RuntimeException
 {
     public function __construct(
-        public readonly SettlementErrorCode $code,
+        public readonly SettlementErrorCode $errorCode,
         string $message,
     ) {
         parent::__construct($message);
@@ -18,6 +18,6 @@ final class PayoutValidationException extends RuntimeException
 
     public function errorCode(): SettlementErrorCode
     {
-        return $this->code;
+        return $this->errorCode;
     }
 }
