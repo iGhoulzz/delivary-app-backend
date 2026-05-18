@@ -32,7 +32,7 @@
 ### Orders & State
 7. **Atomic status transitions only** — `UPDATE ... WHERE status = currentStatus`. Prevents two drivers claiming the same order.
 8. **Always append to `order_status_logs`** — every status change is logged. Powers dispute resolution.
-9. **Never mark delivered without code verification** — pickup + delivery codes are mandatory. Geofence is fallback only.
+9. **Never mark delivered without code verification** — pickup + delivery codes are mandatory. Geofence is fallback only. **Exception (incident-response override):** the `codes.enforce_pickup` and `codes.enforce_delivery` `platform_settings` flags can be flipped to `false` to bypass the code requirement system-wide for the duration of an incident (SMS provider outage, encrypted-codes bug, etc.). Bypasses are fully audited via `picked_up_method = bypassed` / `delivered_method = bypassed` on the order row plus `order_status_logs.metadata`. Defaults ON; flipping requires admin DB/Tinker action (no UI in MVP).
 10. **Drivers cannot self-cancel mid-trip** — must call support after `assigned`. No cancel button in app.
 
 ### Identity & Privacy
@@ -293,8 +293,8 @@ Driver::join('driver_profiles', ...)
 
 ## Current Project State
 
-**Last updated:** 2026-05-10
-**Status:** Schema phase (1–9) ✅ done. **Auth milestone ✅ done. Driver onboarding ✅ done.** Moving to orders milestone.
+**Last updated:** 2026-05-17
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17).** Cash loop closed end-to-end. Real-time + admin staff CRUD are next.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -305,7 +305,7 @@ Driver::join('driver_profiles', ...)
 | 5. Driver Ops | `driver_accounts`, `driver_account_transactions`, `driver_locations`, `driver_strikes` | ✅ |
 | 6. Wallets | Bavix tables (users only) | ✅ |
 | 7. Orders Core | `orders`, `order_status_logs` | ✅ |
-| 8. Operations | `settlements`, `settlement_orders`, `seller_payouts`, `office_inventory` | ✅ |
+| 8. Operations | `settlements`, `settlement_orders`, `seller_payouts`, `seller_payout_orders`, `seller_earnings`, `office_inventory` | ✅ |
 | 9. Future-Ready | `payment_methods`, `topup_requests` | ✅ |
 
 **Cross-cutting:** `declare(strict_types=1)`, `final` classes, full type hints, query scopes, modern accessors, bcmath for money, payout = cash-at-office only (no bank transfers), Pint enforced (PSR-12 + Laravel preset).
@@ -363,20 +363,109 @@ Driver::join('driver_profiles', ...)
 
 **Bug fix during build:** `phone_verified_at` and `email_verified_at` weren't in User's `$fillable` — mass assignment silently dropped them. Added to fillable.
 
+### Order lifecycle milestone (2026-05-12) — A+B + pre-pickup C
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/orders/quote` | POST | sanctum |
+| `/api/orders` | POST | sanctum, phone-verified |
+| `/api/me/orders` | GET | sanctum |
+| `/api/me/orders/{public_id}` | GET | sanctum + OrderPolicy::view |
+| `/api/me/orders/{public_id}/retry` | POST | sanctum + sender + state-guarded |
+| `/api/me/orders/{public_id}/cancel` | POST | sanctum + sender + pre-pickup states only |
+| `/api/me/orders/{public_id}/confirm-pickup-geofence` | POST | sanctum + sender + en_route_pickup |
+| `/api/track/{tracking_token}` | GET | public |
+| `/api/driver/go-online` | POST | sanctum + role:driver |
+| `/api/driver/go-offline` | POST | sanctum + role:driver |
+| `/api/driver/location` | POST | sanctum + role:driver |
+| `/api/driver/orders/broadcast` | GET | sanctum + role:driver |
+| `/api/driver/orders/current` | GET | sanctum + role:driver |
+| `/api/driver/orders/{public_id}/claim` | POST | sanctum + role:driver |
+| `/api/driver/orders/{public_id}/confirm-pickup` | POST | sanctum + role:driver + OrderPolicy::act |
+| `/api/driver/orders/{public_id}/arrived-dropoff` | POST | sanctum + role:driver + OrderPolicy::act |
+| `/api/driver/orders/{public_id}/confirm-delivery` | POST | sanctum + role:driver + OrderPolicy::act |
+| `/api/admin/orders` | GET | sanctum + role:admin |
+| `/api/admin/orders/{public_id}` | GET | sanctum + role:admin |
+| `/api/admin/orders/{public_id}/assign` | POST | sanctum + role:admin |
+| `/api/admin/orders/{public_id}/unassign` | POST | sanctum + role:admin (supports `driver_fault=true` strike path) |
+| `/api/admin/orders/{public_id}/cancel` | POST | sanctum + role:admin (pre-pickup states) |
+
+**Locked decisions:** per-region flat base fee with admin-tunable item-size modifiers + per-km surcharge in `platform_settings`; quote-then-create with 5-min signed `quote_token` (HMAC SHA-256, namespaced); polling broadcast (push deferred to Real-time milestone); atomic conditional UPDATE for claim (spec §10.2); hybrid auto + explicit transitions; collapsed `display_status` for sender + receiver, raw `status` for driver + admin; 6-digit pickup/delivery codes encrypted at rest with two `codes.enforce_*` kill-switch flags (see Critical Rule 9 exception); sender retry resets tier 1; admin manual assign/unassign with `force=true` softening for vehicle/region mismatches; tier escalation is silent column update (only the `no_driver_available` flip is logged).
+
+**Architecture:** `StateTransitionService` is the sole writer of `orders.status` for non-atomic flows; `ClaimService` + `AdminAssignmentService` bypass it intentionally to include `driver_id IS NULL` race guards in their atomic UPDATE statements (each writes its own `order_status_logs` rows + `OrderStatusChanged` events). Financial side-effects (driver bucket credit, fee-status flip, auto-debt-offset) live inline in `CodeVerificationService` rather than a hook registry — simpler, fully transactional.
+
+**Sub-project C (Slice 10) decisions:** Pre-pickup user cancel allowed from `awaiting_driver` (free), `no_driver_available` (free), `assigned`/`driver_en_route_pickup` (fee from `cancellation.user_pre_pickup_fee`). Post-pickup user cancel rejects with `ORDER_NOT_CANCELLABLE_FROM_STATE` (depends on return-to-office flow in sub-project D). Admin can cancel from any pre-pickup operational state. Admin unassign supports `driver_fault=true` → creates `driver_strikes` row with `accept_then_cancel` reason + applies fee through `DriverAccountLedgerService` (debits earnings first, remainder to debt_balance, driver flipped offline). Two new platform settings: `cancellation.user_pre_pickup_fee` (default 0.00), `cancellation.driver_accept_then_cancel_fee` (default 0.00).
+
+**Background jobs:** `EscalateBroadcastingOrdersJob` + `AutoOfflineIdleDriversJob`, both scheduled `everyMinute()->withoutOverlapping()` in `routes/console.php`. Escalation does silent column updates for tier-2 (+20%) and tier-3 (+50%) surcharges, then `StateTransitionService` for the timeout to `no_driver_available`. Auto-offline flips idle/GPS-lost online drivers offline (skips mid-trip drivers); presence events go to `driver_presence_logs`.
+
+**Smoke test:** `scripts/orders-e2e.php` — 9 rollback-wrapped scenarios run via `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`.
+
+### Failed delivery + return-to-office milestone (2026-05-13)
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/driver/orders/{public_id}/mark-delivery-failed` | POST | sanctum + role:driver + OrderPolicy::markDeliveryFailedByDriver |
+| `/api/office/orders` | GET | sanctum + role:office_staff |
+| `/api/office/orders/{public_id}` | GET | sanctum + role:office_staff + office assignment |
+| `/api/office/orders/{public_id}/receive-return` | POST | sanctum + role:office_staff + office assignment |
+| `/api/office/orders/{public_id}/retrieve` | POST | sanctum + role:office_staff + office assignment |
+| `/api/admin/orders/{public_id}/mark-delivery-failed` | POST | sanctum + role:admin |
+| `/api/admin/orders/{public_id}/redirect-return` | POST | sanctum + role:admin |
+| `/api/admin/orders/{public_id}/waive-retrieval-fees` | POST | sanctum + role:admin |
+
+**Locked decisions:** driver/admin can mark failed from `picked_up`, `driver_en_route_dropoff`, or `delivery_in_progress`; sender post-pickup cancel stays rejected. Failure auto-chains through `delivery_failed` to `returning_to_office`; office staff confirms physical receipt to move to `at_office`. Driver earnings are credited only at office receipt, except driver/platform-fault failures. Storage fees are just-in-time using `storage.grace_days`, `storage.daily_fee`, and `storage.abandonment_days`.
+
+**Background job:** `AbandonStaleOrdersJob`, scheduled daily as `orders.abandon-stale`.
+
+**Smoke test:** `scripts/orders-e2e.php` now covers 17 rollback-wrapped scenarios.
+
+### Settlement & Seller Payouts milestone (2026-05-17) ✅
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/driver/settlements` | GET | sanctum + role:driver |
+| `/api/driver/settlements/{public_id}` | GET | sanctum + role:driver + SettlementPolicy::viewByDriver |
+| `/api/me/earnings` | GET | sanctum (throttle:seller_earnings_read) |
+| `/api/me/seller-payouts` | GET | sanctum |
+| `/api/me/seller-payouts/{public_id}` | GET | sanctum + SellerPayoutPolicy::viewBySeller |
+| `/api/office/drivers/{driverPublicId}/settlement-preview` | GET | sanctum + role:office_staff + active assignment |
+| `/api/office/settlements` | POST | sanctum + role:office_staff + active assignment (throttle:office_settlement) |
+| `/api/office/settlements` | GET | sanctum + role:office_staff + active assignment |
+| `/api/office/seller-payouts/lookup` | GET | sanctum + role:office_staff + active assignment |
+| `/api/office/seller-payouts` | POST | sanctum + role:office_staff + active assignment (throttle:office_payout) |
+| `/api/office/seller-payouts` | GET | sanctum + role:office_staff + active assignment |
+| `/api/admin/settlements` | GET | sanctum + role:admin |
+| `/api/admin/settlements/{public_id}` | GET | sanctum + role:admin |
+| `/api/admin/settlements/{public_id}/reverse` | POST | sanctum + role:admin |
+| `/api/admin/seller-payouts` | GET | sanctum + role:admin |
+
+**Locked decisions:** all-or-nothing settlement (single atomic POST); excess rejected (must be handed back); disagreement leaves zero DB trace (per spec §11.4); new `seller_earnings` table is 1:1 with sale orders (orders table untouched); 48h clearance window via `payouts.clearance_hours`; any driver/seller at any office, gated by staff's active assignment; admin reversal blocked once any contributing earning leaves `pending_clearance`; identity verification at counter is visual (no payout codes); Bavix wallet NOT used for sellers (earnings computed from SUM); seller_earnings row spawned at delivery time in `CodeVerificationService`, never at order creation.
+
+**Architecture:** Three services own all writes — `SettlementService` (preview + process, sole writer of `settlements` + `settlement_orders` + `driver_account_transactions`), `SellerPayoutService` (lookup + process, sole writer of `seller_payouts` + `seller_payout_orders`), `SettlementReversalService` (admin correcting-settlement pattern, immutable original + reversed twin). All exceptions carry `errorCode(): SettlementErrorCode` mapped to HTTP via `httpStatus()`. `User::isAssignedToOffice(int)` helper extracted from `OrderPolicy` and reused by all settlement-side policies; sellers correctly authorise by FK ownership alone (no Spatie `seller` role exists — documented in `SellerEarningPolicy` + `SellerPayoutPolicy` class docblocks).
+
+**Background job:** `ClearSellerEarningsJob`, scheduled daily as `seller-earnings.clearance`. Flips `pending_clearance → available` once `cleared_at <= now() - payouts.clearance_hours`.
+
+**Schema deltas:** new `seller_earnings` table (1:1 with sale orders); new `seller_payout_orders` pivot; `seller_payouts` had the request/approval-flow columns dropped (`approved_at`, `approved_by_admin_id`, `rejected_at`, `rejected_by_admin_id`, `rejection_reason`, `requested_at`) and `paid_by_admin_id` renamed to `paid_by_staff_id`. Four new platform settings: `payouts.clearance_hours` (48), `payouts.min_amount` (20.00), `payouts.allow_partial` (true), `settlement.reverse_window_hours` (empty/optional cap).
+
+**Bug fixed during build:** `PayoutValidationException` and `SettlementNotReversibleException` used `public readonly SettlementErrorCode $code` constructor params — this shadowed `RuntimeException::$code` and caused fatal at construction. Renamed to `$errorCode` (with matching accessor).
+
+**Smoke test:** `scripts/orders-e2e.php` now covers 31 rollback-wrapped scenarios (17 existing + 14 new for settlement: happy match, empty/excess/shortage/zero-net settlements, sale-order earning flips, clearance cron 48h cutoff, payout happy path + partial + mismatch + below-minimum, reversal happy path + blocked-once-past-clearance).
+
 ### Next Steps (in order)
-1. **Order lifecycle** — creation, atomic claim, state machine, code verification, settlement
-2. **Office staff operations** — settlement processing, seller payout handover
-3. **Real-time** — Reverb channels for driver location + order status
-4. **Staff CRUD** — admin creates/manages internal accounts (deferred from driver onboarding milestone)
-5. **Account moderation** — global ban/suspend with reason history (deferred from driver onboarding milestone)
-6. **Test infrastructure** — promote tinker smoke tests to Pest feature tests against a separate test DB
+1. **Real-time** — Reverb channels for driver location + order status (layers onto existing `OrderStatusChanged` event zero-touch).
+2. **Staff CRUD** — admin creates/manages internal accounts (deferred from driver onboarding milestone).
+3. **Account moderation** — global ban/suspend with reason history.
+4. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
+5. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
+6. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
 
 ### Open Questions
-- Order creation UX / form field specifics
-- Admin panel scope
+- Storage fee policy specifics (flat daily after grace period? Tiered?)
+- Retrieval payment flow at office (cash-only? Wallet allowed?)
+- Abandonment disposition policy after 30 days
+- SMS provider (Plutu or other Libyan gateway)
 - Rating & review system
-- SMS provider
-- Cancellation fee amounts
+- Admin panel scope
 
 ---
 

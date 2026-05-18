@@ -1039,16 +1039,66 @@ pre_registered → pending_approval → active ⇄ suspended
 
 **E2E smoke test verified 16 scenarios:** cold walk-in → OTP verify → 7 document uploads → submit → admin approve (with all atomic side-effects) → driver pulls profile/account/regions → suspend → reinstate.
 
-### 17.7 Outstanding Architectural Questions (Future)
+### 17.8 Order lifecycle milestone (2026-05-12) ✅ — A+B + pre-pickup C
+
+Built the order lifecycle happy path plus the pre-pickup half of sub-project C per `docs/superpowers/specs/2026-05-12-order-lifecycle-design.md`, `docs/superpowers/plans/2026-05-12-order-lifecycle.md`, and `docs/CODEX.md` (Slices 1–10).
+
+**Endpoints shipped (22 routes across 5 namespaces):**
+- `/api/orders/*` (2): quote + create
+- `/api/me/orders/*` (5): list/show/retry/cancel/confirm-pickup-geofence
+- `/api/track/{token}` (1): public guest tracking
+- `/api/driver/*` (3): go-online/go-offline/location
+- `/api/driver/orders/*` (6): broadcast/current/claim/confirm-pickup/arrived-dropoff/confirm-delivery
+- `/api/admin/orders/*` (5): index/show/assign/unassign(driver-fault aware)/cancel
+
+**State machine driven through `StateTransitionService`** (sole writer of `orders.status` except for the two atomic conditional UPDATEs in `ClaimService` + `AdminAssignmentService::assign` where the `driver_id IS NULL` race guard requires owning the UPDATE statement). Every transition writes one `order_status_logs` row and dispatches an `OrderStatusChanged` event.
+
+**Locked decisions (recap from spec §3):** per-region flat fee with admin-tunable item-size modifiers + per-km surcharge via `platform_settings`; quote-then-create with 5-min signed `quote_token` (HMAC-SHA256, namespaced); polling broadcast (push deferred to milestone #3); atomic conditional UPDATE for claim (§10.2); hybrid auto + explicit transitions with collapsed `display_status` for clients; 6-digit pickup/delivery codes encrypted at rest with `codes.enforce_pickup` / `codes.enforce_delivery` kill-switch flags (explicit Critical Rule 9 exception); sender retry resets tier 1; admin manual assign/unassign with `force=true` softening on vehicle/region mismatches (liability headroom is hard-blocked); tier escalation is silent column update (only the `no_driver_available` flip is logged).
+
+**Sub-project C pre-pickup tail (Slice 10):** Sender pre-pickup cancel allowed from `awaiting_driver` (free), `no_driver_available` (free), `assigned`/`driver_en_route_pickup` (fee from `cancellation.user_pre_pickup_fee`). Admin can cancel from any pre-pickup operational state. Admin unassign supports `driver_fault=true` → creates `driver_strikes(reason=accept_then_cancel, issued_by=system)` and applies fee through `DriverAccountLedgerService` (debits earnings first, remainder to `debt_balance`; driver flipped offline). Post-pickup cancel rejects until sub-project D lands the return-to-office flow.
+
+**Cross-cutting work:**
+- New `OrderErrorCode` enum (34 cases + `httpStatus()`).
+- New `OrderPolicy` (`view`, `act`, `retryByUser`, `cancelByUser`, `confirmGeofenceBySender`).
+- New `OrderStatusChanged` event dispatched on every transition.
+- New `driver_presence_logs` table for online/offline audit (events: `went_online`, `went_offline`, `auto_offline`; reasons: `manual`, `gps_lost`, `idle`).
+- New `QuoteToken` HMAC signer namespaced as `quote_token|APP_KEY`.
+- New `OrderDisplayStatus` value class collapsing the 16-state machine into 7 client-facing surfaces.
+- New `DriverAccountLedgerService` for strike-fee application with earnings → debt overflow.
+- Settings seeder adds 24 platform_settings keys.
+
+**Background workers (scheduled `everyMinute` in `routes/console.php`):**
+- `EscalateBroadcastingOrdersJob` — tier-2 (+20%) at 3 min, tier-3 (+50%) at 6 min, → `no_driver_available` at 10 min.
+- `AutoOfflineIdleDriversJob` — flips online drivers offline on GPS-lost (5 min) or idle (30 min); skips mid-trip drivers.
+
+**Schema additions:**
+- `regions.base_fee` (decimal 12,2, default 0)
+- `orders.pickup_geofence_confirmed_at` (timestamp, nullable)
+- `driver_presence_logs` (new table)
+- `orders.pickup_code` and `delivery_code` cast as `encrypted` (no schema change; cast added)
+
+**E2E smoke verified 9 scenarios:** `scripts/orders-e2e.php` — happy-path delivery (quote → create → broadcast → claim → pickup → arrived → delivery with driver bucket assertions); tier escalation + timeout; sender retry; sender free-cancel from no_driver_available; admin manual assign + unassign; driver auto-offline; Slice 10 — pre-pickup user cancel (free + fee), admin pre-pickup cancel, driver-fault unassign with strike + ledger, post-pickup cancel rejection.
+
+**Bug-class findings caught during build:**
+- `User.phone` column is actually `phone_number` — many code touch-points required adjustment.
+- `regions`/`service_areas` PostGIS column is `boundary`, not `polygon`.
+- `OrderStatus` enum case is `DriverEnRoutePickup`/`DriverEnRouteDropoff` (with `Driver` prefix), not the shorter form initially planned.
+- Project rate-limiter convention lives in `AppServiceProvider::configureRateLimiters()`, not `bootstrap/app.php`.
+- Policy auto-discovery works in this project — no explicit `Gate::policy(...)` call needed.
+- `OrderPolicy::act` requires `$user->hasRole('driver')`; sender-side abilities use FK ownership only (intentional asymmetry, documented in a class-level docblock).
+
+### 17.9 Outstanding Architectural Questions (Future)
 
 These questions are **not yet answered** but architectural decisions exist for them when needed:
 
-1. **Order Creation UX** — exact form fields, validation, item description requirements
-2. **Admin Panel Scope** — which features admin needs from day one
-3. **Rating & Review System** — when/how trust gets built
-4. **SMS Provider Selection** — which Libyan provider to use
-5. **Vehicle Type Expansion** — when/how to add van, truck, etc.
-6. **Cancellation Fee Specifics** — exact LYD amounts for various scenarios
+1. **Storage Fee Policy** — flat daily? Tiered? Grace-period specifics for sub-project D
+2. **Retrieval Payment Method at Office** — cash only? Wallet allowed for self-retrieval?
+3. **Abandonment Disposition** — what happens to items after the 30-day threshold
+4. **Admin Panel Scope** — which features admin needs from day one
+5. **Rating & Review System** — when/how trust gets built
+6. **SMS Provider Selection** — which Libyan provider to use
+7. **Vehicle Type Expansion** — when/how to add van, truck, etc.
+8. **Cancellation Fee Specifics** — exact LYD amounts for various scenarios (Slice 10 wired the knobs; values stay at 0 until business decides)
 
 ---
 
@@ -1094,6 +1144,47 @@ These are the **non-negotiable rules** that guide all implementation decisions:
 | Inactivity auto-offline | 30 min | Yes |
 
 ---
+
+### 17.10 Failed delivery + return-to-office milestone (2026-05-13) ✅
+
+Built sub-project D per `docs/superpowers/specs/2026-05-13-failed-delivery-and-return-flow-design.md` and `docs/superpowers/plans/2026-05-13-failed-delivery-and-return-flow.md`.
+
+**Endpoints shipped (8 routes):**
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/driver/orders/{public_id}/mark-delivery-failed` | POST | sanctum + role:driver + policy |
+| `/api/office/orders` | GET | sanctum + role:office_staff |
+| `/api/office/orders/{public_id}` | GET | sanctum + role:office_staff + office assignment |
+| `/api/office/orders/{public_id}/receive-return` | POST | sanctum + role:office_staff + office assignment |
+| `/api/office/orders/{public_id}/retrieve` | POST | sanctum + role:office_staff + office assignment |
+| `/api/admin/orders/{public_id}/mark-delivery-failed` | POST | sanctum + role:admin |
+| `/api/admin/orders/{public_id}/redirect-return` | POST | sanctum + role:admin |
+| `/api/admin/orders/{public_id}/waive-retrieval-fees` | POST | sanctum + role:admin |
+
+**Locked decisions:** driver/admin can fail post-pickup states; sender post-pickup cancellation remains rejected. Failed deliveries auto-chain to `returning_to_office`; office receipt moves to `at_office` and releases the driver. Driver earnings are credited at office receipt, except driver/platform-fault failures. Storage fees are computed just-in-time with configurable grace/daily/abandonment settings.
+
+**Cross-cutting work:** added retrieval cash/waiver columns to `office_inventory`; added `FailedDeliveryService`, `ReturnOfficeResolver`, `StorageFeeCalculator`, office resources/controllers, D FormRequests, office rate limiters, and `AbandonStaleOrdersJob`. Extracted delivery-completion earnings credit into `DriverAccountLedgerService`. Added `Order::activeForDriver()` so returned-at-office orders no longer block driver availability.
+
+**E2E smoke verified:** expanded `scripts/orders-e2e.php` to 17 rollback-wrapped scenarios covering happy path, C cancellation/strike paths, failed delivery, office receive, retrieval with storage, admin redirect, waiver, admin failure from `picked_up`, abandonment, and cash mismatch errors.
+
+---
+
+### 17.11 Settlement & Seller Payouts milestone (2026-05-17) ✅
+
+Closes the cash loop end-to-end. Built per `docs/superpowers/specs/2026-05-17-settlement-and-seller-payouts-design.md` and `docs/superpowers/plans/2026-05-17-settlement-and-seller-payouts.md`. Implementation was split between Claude (services, controllers requiring multi-table locks, smoke, docs) and Codex (migrations, models, enums, FormRequests, JsonResources, read controllers, rate limiters, localization). 24 tasks total.
+
+Office staff reconciles a driver's three buckets in one atomic transaction (all-or-nothing, excess rejected, disagreement leaves zero trace per §11.4). Sellers track per-order earnings through `pending_settlement → pending_clearance → available → paid_out` via the new `seller_earnings` table (1:1 with sale orders; the wide `orders` table stays untouched). 48h clearance window between settlement and seller-availability is configurable via `payouts.clearance_hours`. Sellers collect cash at any active office; identity verification at the counter is visual (staff judgement) — no payout codes. Admin reversal is permitted only while every contributing earning is still `pending_clearance` — standard correcting-settlement pattern (immutable original + reversed twin row).
+
+**Endpoints shipped (15 routes):** 2 driver settlement-history, 3 seller (earnings + payout history), 6 office staff (3 settlement + 3 payout), 4 admin (3 settlement incl. reversal + 1 payout list).
+
+**Schema deltas:** new `seller_earnings` table (1:1 unique on order_id; `seller_user_id` denormalized for hot-path queries; indexed on `(seller_user_id, status)` and `(status, cleared_at)`); new `seller_payout_orders` pivot; `seller_payouts` had request/approval columns dropped (`approved_at`, `approved_by_admin_id`, `rejected_at`, `rejected_by_admin_id`, `rejection_reason`, `requested_at`) and `paid_by_admin_id` renamed to `paid_by_staff_id`. Four new platform settings: `payouts.clearance_hours` (48), `payouts.min_amount` (20.00), `payouts.allow_partial` (true), `settlement.reverse_window_hours` (optional cap).
+
+**Background job:** `ClearSellerEarningsJob`, scheduled daily as `seller-earnings.clearance`. Flips eligible `pending_clearance` earnings to `available`.
+
+**Cross-cutting work:** extracted `User::isAssignedToOffice(int): bool` helper from `OrderPolicy::orderInUsersOffice` (now delegates); three new policies (`SettlementPolicy`, `SellerPayoutPolicy`, `SellerEarningPolicy`) with documented seller-side asymmetry (no Spatie `seller` role — FK ownership is the gate, mirroring `OrderPolicy::viewAsSender`); `CodeVerificationService` now spawns the seller-earning row on sale-order delivery success inline within the existing DB transaction.
+
+**E2E smoke verified:** expanded `scripts/orders-e2e.php` to 31 rollback-wrapped scenarios — 14 new for settlement: happy match, empty/excess/shortage/zero-net settlements, sale-order earning state flips, clearance cron 48h cutoff (eligible + ineligible), payout happy path + partial + total mismatch + below minimum, reversal happy path + blocked-once-past-clearance.
 
 **End of Specification Document**
 

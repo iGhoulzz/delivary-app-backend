@@ -470,3 +470,319 @@ Other verification rerun:
 
 - `php artisan test`: passed, 2 tests / 2 assertions.
 - Route checks for order, sender-order, driver-order, admin-order, and public tracking routes passed.
+
+### 2026-05-12 Slice 8 - Broadcast Escalation + Driver Auto-Offline
+
+Implemented the remaining A+B scheduled background behavior:
+
+- Broadcast tier escalation service/job.
+- Driver auto-offline service/job.
+- Minute schedule wiring in `routes/console.php`.
+
+Files added:
+
+- `app/Services/Order/EscalationService.php`
+- `app/Jobs/EscalateBroadcastingOrdersJob.php`
+- `app/Services/Driver/AutoOfflineService.php`
+- `app/Jobs/AutoOfflineIdleDriversJob.php`
+
+Files updated:
+
+- `routes/console.php`
+
+Escalation behavior:
+
+- Processes `awaiting_driver` orders.
+- At `broadcast.tier_2_after_minutes`, silently sets tier 2, applies tier 2 surcharge, recomputes `delivery_fee`.
+- At `broadcast.tier_3_after_minutes`, silently sets tier 3, applies tier 3 surcharge, recomputes `delivery_fee`.
+- At `broadcast.no_driver_after_minutes`, transitions to `no_driver_available` through `StateTransitionService`, creating a status log.
+
+Auto-offline behavior:
+
+- Processes online drivers only.
+- Skips drivers with active orders.
+- If GPS is missing/stale, flips to `offline` and logs `driver_presence_logs.event = auto_offline`, `reason = gps_lost`.
+- If idle threshold is hit, flips to `offline` and logs `reason = idle`.
+
+Schedule:
+
+```text
+* * * * * orders.escalate-broadcasting
+* * * * * drivers.auto-offline-idle
+```
+
+DB smoke result:
+
+```json
+{
+  "tier2": [2, 20, "12.00"],
+  "tier3": [3, 50, "15.00"],
+  "timeout_status": "no_driver_available",
+  "auto_offline_processed": 1,
+  "driver_activity": "offline",
+  "presence_reason": "gps_lost"
+}
+```
+
+Verification:
+
+- `php artisan schedule:list`: shows both minute schedules.
+- `php artisan schedule:run`: both scheduled callbacks ran successfully.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `php artisan test`: passed, 2 tests / 2 assertions.
+- `vendor/bin/pint` passed/fixed touched files.
+
+### 2026-05-12 Slice 9 - Reusable Order E2E Smoke Script
+
+Added a reusable, rollback-wrapped smoke script for the completed A+B order lifecycle surface.
+
+File added:
+
+- `scripts/orders-e2e.php`
+
+Run command:
+
+```bash
+php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"
+```
+
+Coverage:
+
+1. Happy path delivery:
+   - quote
+   - create
+   - driver online
+   - broadcast
+   - claim
+   - pickup code
+   - arrived dropoff
+   - delivery code
+   - driver bucket assertions
+2. Broadcast escalation:
+   - tier 2, +20 percent
+   - tier 3, +50 percent
+   - timeout to `no_driver_available`
+3. Sender recovery:
+   - retry from `no_driver_available`
+   - free cancel from `no_driver_available`
+4. Admin ops:
+   - manual assign
+   - unassign back to `awaiting_driver`
+5. Driver auto-offline:
+   - stale GPS flips driver offline
+   - `driver_presence_logs` row written
+
+The script creates temporary users, driver profile/account, and orders inside a single transaction and rolls back at the end, so it should not pollute local data.
+
+Smoke result after Pint:
+
+```text
+ALL ORDER E2E SMOKE SCENARIOS PASSED
+```
+
+Other verification:
+
+- `vendor/bin/pint scripts/orders-e2e.php`: passed/fixed.
+- `php artisan test`: passed, 2 tests / 2 assertions.
+- `php artisan migrate:status --pending`: no pending migrations.
+
+### 2026-05-12 Slice 10 - Sub-project C Pre-Pickup Cancellation + Driver Fault Strikes
+
+Implemented the pre-pickup cancellation and driver accept-then-cancel support flow. After-pickup sender cancellation stays rejected until the return-to-office flow exists.
+
+Files added:
+
+- `app/Http/Requests/Order/AdminCancelOrderRequest.php`
+- `app/Services/Driver/DriverAccountLedgerService.php`
+
+Files updated:
+
+- `app/Services/Order/CancellationService.php`
+- `app/Services/Order/AdminAssignmentService.php`
+- `app/Http/Controllers/Api/Admin/OrderController.php`
+- `app/Http/Controllers/Api/Me/Order/CancelController.php`
+- `app/Http/Requests/Order/AdminUnassignOrderRequest.php`
+- `app/Policies/OrderPolicy.php`
+- `routes/api.php`
+- `database/seeders/OrderLifecyclePlatformSettingsSeeder.php`
+- `scripts/orders-e2e.php`
+
+Behavior added:
+
+- Sender can cancel from `awaiting_driver` and `no_driver_available` for `0.00`.
+- Sender can cancel from `assigned` / `driver_en_route_pickup` with `cancellation.user_pre_pickup_fee`.
+- Sender cancellation still rejects after pickup with `ORDER_NOT_CANCELLABLE_FROM_STATE`.
+- Admin can cancel pre-pickup operational states through `POST /api/admin/orders/{public_id}/cancel`.
+- User/admin cancellations transition through `StateTransitionService` to `cancelled_by_user` / `cancelled_by_admin`.
+- Assigned driver is released back to `online` on normal pre-pickup cancellation.
+- Admin unassign supports `driver_fault=true`, `notes`, and `fee_amount_override`.
+- Driver-fault unassign creates a `driver_strikes` row with `accept_then_cancel`, `issued_by=system`.
+- Driver-fault unassign applies the strike fee through `driver_account_transactions` using `strike_fee`, debiting `earnings_balance` first and putting any remainder into `debt_balance`.
+- Driver-fault unassign sets the driver `offline` so they must intentionally go online again.
+- New platform setting defaults:
+  - `cancellation.user_pre_pickup_fee = 0.00`
+  - `cancellation.driver_accept_then_cancel_fee = 0.00`
+
+Smoke script coverage added:
+
+1. Sender cancels `awaiting_driver` for free.
+2. Sender cancels `driver_en_route_pickup` with configured fee.
+3. Admin cancels assigned pre-pickup order and frees driver.
+4. Admin unassign with `driver_fault=true` creates strike and ledger transaction.
+5. After-pickup sender cancel is rejected.
+
+Verification:
+
+- `php -l` on touched PHP files: passed.
+- `vendor/bin/pint ...`: passed/fixed.
+- `php artisan route:list --path=api/admin/orders`: new admin cancel route present.
+- `php artisan route:list --path=api/me/orders`: sender cancel route still present.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `php artisan test`: passed, 2 tests / 2 assertions.
+- `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`: passed all 9 rollback-wrapped scenarios.
+
+### 2026-05-13 Slice 11 - Failed Delivery + Return-to-Office Flow
+
+Implemented sub-project D per `docs/superpowers/specs/2026-05-13-failed-delivery-and-return-flow-design.md` and `docs/superpowers/plans/2026-05-13-failed-delivery-and-return-flow.md`.
+
+Files added:
+
+- `database/migrations/2026_05_13_000100_add_retrieval_columns_to_office_inventory_table.php`
+- `app/Services/Order/FailedDeliveryService.php`
+- `app/Services/Order/ReturnOfficeResolver.php`
+- `app/Services/Order/StorageFeeCalculator.php`
+- `app/Http/Requests/Order/*` D FormRequests
+- `app/Http/Resources/Order/OfficeInventoryResource.php`
+- `app/Http/Resources/Order/OfficeOrderResource.php`
+- `app/Http/Controllers/Api/Driver/Order/MarkDeliveryFailedController.php`
+- `app/Http/Controllers/Api/Office/Order/*`
+- `app/Jobs/AbandonStaleOrdersJob.php`
+
+Files updated:
+
+- `app/Enums/OrderStatus.php`
+- `app/Enums/OrderErrorCode.php`
+- `app/Models/OfficeInventory.php`
+- `app/Models/Order.php`
+- `app/Services/Driver/DriverAccountLedgerService.php`
+- `app/Services/Order/CodeVerificationService.php`
+- `app/Policies/OrderPolicy.php`
+- `app/Http/Resources/Order/OrderResource.php`
+- `app/Http/Controllers/Api/Admin/OrderController.php`
+- `app/Providers/AppServiceProvider.php`
+- `routes/api.php`
+- `routes/console.php`
+- `database/seeders/OrderLifecyclePlatformSettingsSeeder.php`
+- `lang/en/order_messages.php`
+- `lang/ar/order_messages.php`
+- `scripts/orders-e2e.php`
+- `docs/CLAUDE.md`
+- `docs/SYSTEM_SPECIFICATION.md`
+- `docs/superpowers/specs/2026-05-13-failed-delivery-and-return-flow-design.md`
+
+Behavior added:
+
+- Driver/admin can mark post-pickup orders failed from `picked_up`, `driver_en_route_dropoff`, or `delivery_in_progress`.
+- Failed orders auto-chain `delivery_failed -> returning_to_office`.
+- Return office resolves from pickup region office, falling back to nearest active office.
+- Office staff can list/show office-bound returns, receive returns, and retrieve orders with exact cash validation.
+- Driver earnings credit moved into `DriverAccountLedgerService::applyDeliveryCompletionCredit()` and is reused by happy-path delivery and office return receipt.
+- Driver/platform fault failures do not credit driver earnings at return receipt.
+- Admin can redirect return office mid-return and waive retrieval fees while at office.
+- Daily `AbandonStaleOrdersJob` flips stale `at_office` orders to `abandoned`.
+- Added `Order::activeForDriver()` so returned-at-office orders do not block driver availability while still preserving `driver_id` for history.
+
+Verification:
+
+- `php artisan migrate`: migrated retrieval columns.
+- `php artisan db:seed --class=OrderLifecyclePlatformSettingsSeeder`: inserted storage defaults.
+- Schema/settings/error-code tinker checks: passed.
+- `php artisan route:list --path=api`: all 8 D routes present.
+- `php artisan schedule:list`: `orders.abandon-stale` daily schedule present.
+- `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`: passed all 17 rollback-wrapped scenarios.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `php artisan test`: passed, 2 tests / 2 assertions.
+- `vendor/bin/pint`: passed/fixed touched files.
+
+### 2026-05-17 Slice 12 - Settlement + Seller Payouts Codex Tasks
+
+Implemented the Codex-owned mechanical slice from `docs/superpowers/specs/2026-05-17-settlement-and-seller-payouts-design.md` and `docs/superpowers/plans/2026-05-17-settlement-and-seller-payouts.md`. I intentionally did not touch Claude-owned settlement services, payout services, policies, office/admin mutation controllers, or e2e settlement scenarios.
+
+Files added:
+
+- `database/migrations/2026_05_17_000100_create_seller_earnings_table.php`
+- `database/migrations/2026_05_17_000200_simplify_seller_payouts_table.php`
+- `database/migrations/2026_05_17_000300_create_seller_payout_orders_table.php`
+- `app/Enums/SellerEarningStatus.php`
+- `app/Enums/SettlementErrorCode.php`
+- `app/Models/SellerEarning.php`
+- `app/Models/SellerPayoutOrder.php`
+- `app/Jobs/ClearSellerEarningsJob.php`
+- `app/Http/Requests/Settlement/*`
+- `app/Http/Resources/Settlement/*`
+- `app/Http/Controllers/Api/Driver/Settlement/*`
+- `app/Http/Controllers/Api/Me/Settlement/*`
+- `lang/en/settlement_messages.php`
+- `lang/ar/settlement_messages.php`
+
+Files updated:
+
+- `app/Enums/SellerPayoutStatus.php`
+- `app/Models/SellerPayout.php`
+- `app/Models/Order.php`
+- `app/Models/User.php`
+- `app/Providers/AppServiceProvider.php`
+- `database/seeders/OrderLifecyclePlatformSettingsSeeder.php`
+- `routes/api.php`
+- `routes/console.php`
+
+Behavior added:
+
+- Added `seller_earnings` lifecycle table and `seller_payout_orders` pivot.
+- Simplified `seller_payouts` away from request/approval fields into cash-handover receipt shape with `paid_by_staff_id`.
+- Added seller earning/payout models and `Order::sellerEarning()`, `User::sellerEarnings()`.
+- Added daily `ClearSellerEarningsJob` that advances eligible `pending_clearance` earnings to `available`.
+- Added seller read endpoints:
+  - `GET /api/me/earnings`
+  - `GET /api/me/seller-payouts`
+  - `GET /api/me/seller-payouts/{public_id}`
+- Added driver settlement history endpoints:
+  - `GET /api/driver/settlements`
+  - `GET /api/driver/settlements/{public_id}`
+- Added settlement/payout FormRequests, JsonResources, rate limiters, platform settings, and localization files.
+
+Verification:
+
+- `php -l` on touched PHP files: passed.
+- `php artisan migrate`: applied all three 2026-05-17 migrations.
+- `php artisan db:seed --class=OrderLifecyclePlatformSettingsSeeder`: passed.
+- Schema tinker checks: `seller_earnings` and `seller_payout_orders` exist; `seller_payouts` now has `paid_by_staff_id`.
+- Settings tinker checks: payout settings resolve.
+- `php artisan schedule:list`: `seller-earnings.clearance` daily schedule present.
+- `php artisan route:list --path=driver/settlements`: 2 routes present.
+- `php artisan route:list --path=me/earnings`: 1 route present.
+- `php artisan route:list --path=me/seller-payouts`: 2 routes present.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `php artisan test`: passed, 2 tests / 2 assertions.
+- `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`: passed all 17 existing rollback-wrapped order scenarios.
+- `vendor/bin/pint`: passed/fixed touched files.
+
+
+---
+
+## Settlement & Seller Payouts milestone (2026-05-17) — Claude completed remaining tasks
+
+After Codex shipped Tasks 1–7 + 12, 14–17, 21–22 of the settlement plan, Claude implemented the remaining tasks in the same session via direct edits + a smoke-driven verification loop. Summary of Claude's deliveries:
+
+- **Task 8** (policies + helper): extracted `User::isAssignedToOffice(int): bool`; refactored `OrderPolicy::orderInUsersOffice` to delegate; added `SettlementPolicy`, `SellerPayoutPolicy`, `SellerEarningPolicy` with documented seller-side authorisation asymmetry (no Spatie seller role — FK ownership is the gate).
+- **Task 9** (`SettlementService`): atomic preview + process; locks `driver_accounts`; rejects empty buckets + excess; pushes shortage to `debt_balance`; flips `pending_settlement` earnings to `pending_clearance` + writes `settlement_orders` pivot. New: `SettlementExcessException`, `EmptySettlementException`, `App\ValueObjects\SettlementPreview`.
+- **Task 10** (`SellerPayoutService`): atomic lookup + process; locks selected earnings; validates ownership, status, payout-link absence, server-recomputed total, min amount; flips earnings → `paid_out` + writes `seller_payout_orders` pivot. New: `PayoutValidationException`.
+- **Task 11** (`SettlementReversalService`): admin correcting-settlement pattern; locks original settlement + earnings + driver_account; allowed only while every contributing earning is still `pending_clearance`; writes opposite-direction settlement row; flips earnings back to `pending_settlement`; clamps debt_balance ≥ 0 per Critical Rule 5. New: `SettlementNotReversibleException`.
+- **Task 13** (`CodeVerificationService` integration): added private `spawnSellerEarning(Order)` invoked in the existing `confirmDelivery` DB transaction after `applyDriverDeliveryFinancials`; gates on `OrderType::P2pSale|MerchantDelivery` + non-zero `item_price`; computes `item_price - commission_amount`.
+- **Tasks 18–20** (write controllers): 10 controllers across office settlement, office seller-payout, admin settlement + payout (incl. reversal). Routes wired under `/api/office` and `/api/admin` groups with `throttle:office_settlement` / `throttle:office_payout` middleware. All 15 settlement endpoints visible in `php artisan route:list`.
+- **Task 23** (smoke): 14 new rollback-wrapped scenarios in `scripts/orders-e2e.php` (total now 31). Covers happy match, empty/excess/shortage/zero-net settlements, sale-order earning flips, clearance cron (eligible + ineligible), payout happy + partial + mismatch + below-minimum, reversal happy + blocked-once-past-clearance.
+- **Task 24** (docs): updated `docs/CLAUDE.md` Current Project State + endpoint table; added `docs/SYSTEM_SPECIFICATION.md` §17.11; this entry in `docs/CODEX.md`.
+
+**Bug fixed during smoke:** `PayoutValidationException` + `SettlementNotReversibleException` initially had `public readonly SettlementErrorCode $code` constructor params, which shadowed `RuntimeException::$code` and crashed at construction. Renamed to `$errorCode` with matching accessor.
+
+**Final verification:** `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` → all 31 rollback-wrapped scenarios pass.
