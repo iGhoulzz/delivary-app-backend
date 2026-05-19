@@ -55,6 +55,47 @@ final class BroadcastService
             ->values();
     }
 
+    /**
+     * Inverse of candidatesFor(): given an order, find online drivers within
+     * the order's current tier radius who match its vehicle class and have
+     * liability headroom. Used by broadcast fan-out (push the order to each
+     * eligible driver's private channel).
+     *
+     * @return Collection<int, DriverProfile>
+     */
+    public function eligibleDriversFor(Order $order): Collection
+    {
+        $radiusMeters = $this->radiusMetersForTier($order->search_radius_tier);
+        $staleAfter = (int) PlatformSetting::get('driver.location_stale_after_seconds', 120);
+        $staleCutoff = now()->subSeconds($staleAfter);
+
+        $eligibleVehicles = array_map(
+            static fn (VehicleType $v): string => $v->value,
+            VehicleType::eligibleFor($order->item_size->value),
+        );
+
+        return DriverProfile::query()
+            ->where('status', DriverStatus::Active->value)
+            ->where('activity_status', DriverActivityStatus::Online->value)
+            ->whereIn('vehicle_type', $eligibleVehicles)
+            ->whereNotNull('current_location')
+            ->whereNotNull('last_location_updated_at')
+            ->where('last_location_updated_at', '>=', $staleCutoff)
+            ->whereRaw(
+                'ST_DWithin(current_location::geography, ?::geography, ?)',
+                [(string) $order->pickup_location, $radiusMeters],
+            )
+            ->with('user.driverAccount')
+            ->get()
+            ->filter(function (DriverProfile $profile) use ($order): bool {
+                $account = $profile->user?->driverAccount;
+
+                return $account !== null
+                    && $account->canHoldAdditionalCash($order->cashCollectedAtDelivery());
+            })
+            ->values();
+    }
+
     public function freshOnlineProfile(User $driver): DriverProfile
     {
         $profile = DriverProfile::query()->where('user_id', $driver->id)->first();
