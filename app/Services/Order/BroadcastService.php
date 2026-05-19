@@ -81,6 +81,8 @@ final class BroadcastService
             ->whereNotNull('current_location')
             ->whereNotNull('last_location_updated_at')
             ->where('last_location_updated_at', '>=', $staleCutoff)
+            // Both columns are geography(POINT, 4326) — see CLAUDE.md Critical Rules 14-15.
+            // ST_DWithin on geography uses meters; radiusMeters bound as int param.
             ->whereRaw(
                 'ST_DWithin(current_location::geography, ?::geography, ?)',
                 [(string) $order->pickup_location, $radiusMeters],
