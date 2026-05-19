@@ -26,7 +26,10 @@ it('accepts a valid Sanctum token at broadcasting auth', function (): void {
         'socket_id' => '1234.5678',
     ]);
 
-    // The route is registered; auth passes; channel callback authorizes.
-    // 200 means Laravel accepted the auth + the channel callback returned truthy.
+    // 200 comes from NullBroadcaster (BROADCAST_CONNECTION=null in phpunit.xml),
+    // which short-circuits channel-callback evaluation. This test verifies only
+    // that the route exists and Sanctum auth grants entry; channel-callback
+    // authorization is covered by tests/Unit/Broadcasting/ChannelAuthorizationTest
+    // (added in Task 3) which calls Broadcast::auth() directly.
     expect($response->status())->toBe(200);
 });
