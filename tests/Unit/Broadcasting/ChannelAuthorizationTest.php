@@ -112,10 +112,9 @@ it('authorizes the sender on their order channel', function (): void {
 it('authorizes the receiver user on their order channel', function (): void {
     $sender = User::factory()->create();
     $receiver = User::factory()->create();
-    $order = Order::factory()->create([
-        'sender_user_id' => $sender->id,
-        'receiver_user_id' => $receiver->id,
-    ]);
+    $order = Order::factory()
+        ->withReceiverUser($receiver)
+        ->create(['sender_user_id' => $sender->id]);
 
     $result = channelAuth(
         request()->merge(['channel_name' => 'private-order.'.$order->public_id])
