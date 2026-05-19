@@ -24,6 +24,8 @@ final class OrderBroadcastToDriver implements ShouldBroadcast
     use InteractsWithSockets;
     use SerializesModels;
 
+    private const string EVENT_NAME = 'order.broadcast_to_driver';
+
     public bool $afterCommit = true;
 
     public function __construct(
@@ -40,14 +42,14 @@ final class OrderBroadcastToDriver implements ShouldBroadcast
 
     public function broadcastAs(): string
     {
-        return 'order.broadcast_to_driver';
+        return self::EVENT_NAME;
     }
 
     /** @return array<string, mixed> */
     public function broadcastWith(): array
     {
         return [
-            'type' => 'order.broadcast_to_driver',
+            'type' => self::EVENT_NAME,
             'tier' => $this->tier,
             'order' => (new BroadcastOrderResource($this->order))->resolve(),
         ];
