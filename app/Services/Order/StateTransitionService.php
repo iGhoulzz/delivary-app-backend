@@ -79,11 +79,12 @@ final class StateTransitionService
         ]);
 
         $order->forceFill($updates);
+        $order->refresh();
 
-        event(new OrderStatusChanged($order->refresh(), $from, $to, $actorType, $actorId));
+        event(new OrderStatusChanged($order, $from, $to, $actorType, $actorId));
 
         if ($to === OrderStatus::AwaitingDriver) {
-            foreach ($this->broadcasts->eligibleDriversFor($order->refresh()) as $profile) {
+            foreach ($this->broadcasts->eligibleDriversFor($order) as $profile) {
                 event(new OrderBroadcastToDriver(
                     $order,
                     (int) $profile->user_id,
