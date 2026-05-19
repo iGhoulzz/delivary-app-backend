@@ -1,5 +1,14 @@
 <?php
 
+use App\Enums\DriverActivityStatus;
+use App\Enums\DriverStatus;
+use App\Enums\OrderStatus;
+use App\Enums\VehicleType;
+use App\Models\DriverAccount;
+use App\Models\DriverProfile;
+use App\Models\Order;
+use App\Models\User;
+use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -50,4 +59,51 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/*
+|--------------------------------------------------------------------------
+| Real-time milestone helpers
+|--------------------------------------------------------------------------
+|
+| Used by tests in tests/Unit/Services/Order, tests/Feature/Realtime, and
+| tests/Unit/Listeners. Declared globally here so each test file can call
+| them without redeclaration errors.
+|
+*/
+
+function makeOnlineDriverAt(float $lat, float $lng, ?VehicleType $vehicle = null): User
+{
+    $vehicle ??= VehicleType::Motorcycle;
+
+    $user = User::factory()->create();
+    $user->assignRole('driver');
+
+    DriverProfile::factory()->create([
+        'user_id' => $user->id,
+        'status' => DriverStatus::Active->value,
+        'activity_status' => DriverActivityStatus::Online->value,
+        'vehicle_type' => $vehicle->value,
+        'current_location' => Point::makeGeodetic($lat, $lng),
+        'last_location_updated_at' => now(),
+    ]);
+
+    DriverAccount::factory()->create([
+        'driver_id' => $user->id,
+        'max_cash_liability' => '200.00',
+        'cash_to_deposit' => '0.00',
+    ]);
+
+    return $user;
+}
+
+function makeOrderAt(float $lat, float $lng, string $itemSize = 'small'): Order
+{
+    return Order::factory()->create([
+        'status' => OrderStatus::AwaitingDriver->value,
+        'driver_id' => null,
+        'pickup_location' => Point::makeGeodetic($lat, $lng),
+        'item_size' => $itemSize,
+        'search_radius_tier' => 1,
+    ]);
 }
