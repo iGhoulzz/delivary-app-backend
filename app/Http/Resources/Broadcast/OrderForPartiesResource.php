@@ -15,6 +15,10 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * Audience-neutral (sender + receiver receive the same payload). Request-
  * independent — must NOT read $request->user() because broadcasts run off
  * the HTTP request lifecycle.
+ *
+ * Caller contract: the Order must have `driver.driverProfile` eager-loaded
+ * before wrapping in this Resource, otherwise N+1 queries will fire on every
+ * broadcast. The dispatching event's broadcastWith() is responsible.
  */
 final class OrderForPartiesResource extends JsonResource
 {
@@ -69,6 +73,10 @@ final class OrderForPartiesResource extends JsonResource
         if ($o->driver_id === null) {
             return null;
         }
+        // Driver identity (name, vehicle, last-seen) is exposed as soon as a
+        // driver is assigned. current_location is the only field gated on
+        // post-pickup, to avoid leaking the pickup-route geometry to the
+        // receiver before pickup. Spec §4.0 / Task 4 plan.
         $afterPickup = in_array($o->status, [
             OrderStatus::PickedUp,
             OrderStatus::DriverEnRouteDropoff,
