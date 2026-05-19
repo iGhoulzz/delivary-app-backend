@@ -17,6 +17,7 @@ use App\Enums\ReturnFault;
 use App\Enums\ReturnReason;
 use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -27,6 +28,7 @@ use Illuminate\Support\Str;
 
 final class Order extends Model
 {
+    use HasFactory;
     use SoftDeletes;
 
     /** @var array<int, string> */
