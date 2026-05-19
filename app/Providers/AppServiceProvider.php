@@ -8,7 +8,6 @@ use App\Models\PlatformSetting;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -21,7 +20,6 @@ final class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Broadcast::routes(['middleware' => ['auth:sanctum']]);
         $this->configureRateLimiters();
     }
 
