@@ -6,6 +6,7 @@ namespace App\Services\Driver;
 
 use App\Enums\DriverAccountBucket;
 use App\Enums\DriverAccountTransactionReason;
+use App\Events\DriverAccountUpdated;
 use App\Models\DriverAccount;
 use App\Models\DriverAccountTransaction;
 use App\Models\Order;
@@ -131,5 +132,7 @@ final class DriverAccountLedgerService
             'notes' => $notes,
             'created_by_admin_id' => $createdByAdminId,
         ]);
+
+        event(new DriverAccountUpdated($account->refresh()));
     }
 }
