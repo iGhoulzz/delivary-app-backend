@@ -1,0 +1,38 @@
+; ─── Reverb WebSocket server ────────────────────────────────────────────
+; One worker process. Reverb is already async (ReactPHP).
+[program:delivary-reverb]
+process_name=%(program_name)s
+command=php /var/www/delivary/artisan reverb:start --host=0.0.0.0 --port=8080
+autostart=true
+autorestart=true
+user=www-data
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/delivary-reverb.log
+stopwaitsecs=3600
+
+; ─── Queue worker: default jobs ─────────────────────────────────────────
+[program:delivary-queue-default]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/delivary/artisan queue:work redis --queue=default --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/delivary-queue-default.log
+stopwaitsecs=3600
+
+; ─── Queue worker: broadcasts (real-time fan-out) ──────────────────────
+; Higher concurrency because broadcast events are short-lived and bursty.
+; Location events bypass this queue (ShouldBroadcastNow), so this worker
+; only handles ShouldBroadcast (queued) events.
+[program:delivary-queue-broadcasts]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/delivary/artisan queue:work redis --queue=broadcasts --sleep=1 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+user=www-data
+numprocs=4
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/delivary-queue-broadcasts.log
+stopwaitsecs=3600
