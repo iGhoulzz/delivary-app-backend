@@ -42,6 +42,7 @@ use App\Models\Region;
 use App\Models\SellerEarning;
 use App\Models\SellerPayout;
 use App\Models\Settlement;
+use App\Models\SettlementOrder;
 use App\Models\User;
 use App\Services\Settlement\SellerPayoutService;
 use App\Services\Settlement\SettlementReversalService;
@@ -669,6 +670,39 @@ try {
         $caught31 = $e->errorCode()->value === 'SETTLEMENT_NOT_REVERSIBLE';
     }
     $assert($caught31, 'reversal blocked when any earning past pending_clearance');
+
+    echo "Scenario 32: reversal restores debt correctly when settlement cleared old debt + recorded shortage\n";
+    // Regression for codex finding: pre-existing debt 20 + cash 30, driver brings 0 → shortage 50.
+    // Old buggy math computed debt = current_debt - (debt_cleared + shortage) = 50 - 70 = -20 → clamped 0.
+    // Correct math: debt = current_debt - shortage + debt_cleared = 50 - 50 + 20 = 20.
+    $d32 = $freshDriver('30.00', '0.00', '20.00');
+    $seller32 = $makeUser('Seller32', $uniquePhone(32), 'user');
+    $e32 = $freshEarning($d32, $seller32, '40.00');
+    $orig32 = $settlementSvc->process($d32, $officeStaff, $office, '0.00', '0.00', null);
+    $assert((string) $orig32->debt_balance_cleared === '20.00', 'settlement snapshotted old debt 20');
+    $assert((string) $orig32->shortage_amount === '50.00', 'settlement recorded shortage 50');
+    $acct32mid = DriverAccount::where('driver_id', $d32->id)->first();
+    $assert((string) $acct32mid->debt_balance === '50.00', 'post-settlement debt equals shortage (50)');
+
+    // Verify balance_after on the debt-clearing transaction is 0.00 (regression for finding #2).
+    $debtClearTx = DriverAccountTransaction::query()
+        ->where('driver_id', $d32->id)
+        ->where('bucket', DriverAccountBucket::DebtBalance->value)
+        ->where('reason', DriverAccountTransactionReason::Settlement->value)
+        ->where('reference_id', $orig32->id)
+        ->first();
+    $assert($debtClearTx !== null, 'debt-clear settlement transaction recorded');
+    $assert((string) $debtClearTx->balance_after === '0.00', 'debt-clear balance_after is 0.00 (not negative)');
+
+    $reversalSvc->reverse($orig32, $admin, 'Regression scenario for debt+shortage reversal');
+    $acct32 = DriverAccount::where('driver_id', $d32->id)->first();
+    $assert((string) $acct32->cash_to_deposit === '30.00', 'cash bucket restored to 30');
+    $assert((string) $acct32->earnings_balance === '0.00', 'earnings bucket restored to 0');
+    $assert((string) $acct32->debt_balance === '20.00', 'debt bucket restored to original 20 (was clamped to 0 under bug)');
+
+    // Pivot rows on the cancelled original are preserved for audit (regression for finding #3).
+    $pivotCount32 = SettlementOrder::query()->where('settlement_id', $orig32->id)->count();
+    $assert($pivotCount32 === 1, 'settlement_orders pivot rows preserved on reversal');
 
     echo "ALL ORDER E2E SMOKE SCENARIOS PASSED\n";
 } finally {

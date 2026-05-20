@@ -161,7 +161,7 @@ final class SettlementService
                 $account,
                 DriverAccountBucket::DebtBalance,
                 bcmul($debtSnapshot, '-1', 2),
-                bcsub($shortage, $debtSnapshot, 2),
+                '0.00',
                 DriverAccountTransactionReason::Settlement,
                 $settlement,
             );

@@ -102,12 +102,14 @@ final class SettlementReversalService
 
             $account->cash_to_deposit = bcadd((string) $account->cash_to_deposit, $cashRestore, 2);
             $account->earnings_balance = bcadd((string) $account->earnings_balance, $earningsRestore, 2);
-            $account->debt_balance = bcsub(
-                (string) $account->debt_balance,
-                bcadd($debtRestore, $shortageRestore, 2),
+            // Original settlement cleared $debtRestore from debt and pushed $shortageRestore back into it.
+            // To reverse: add back the cleared portion (+debtRestore) and remove the shortage (-shortageRestore).
+            $account->debt_balance = bcadd(
+                bcsub((string) $account->debt_balance, $shortageRestore, 2),
+                $debtRestore,
                 2,
             );
-            // Clamp at zero (Critical Rule 5 — no negative balances).
+            // Defense-in-depth: clamp at zero (Critical Rule 5 — no negative balances).
             if (bccomp((string) $account->debt_balance, '0.00', 2) === -1) {
                 $account->debt_balance = '0.00';
             }
@@ -130,7 +132,7 @@ final class SettlementReversalService
             $this->writeReversalTx(
                 $account,
                 DriverAccountBucket::DebtBalance,
-                bcmul(bcadd($debtRestore, $shortageRestore, 2), '-1', 2),
+                bcsub($debtRestore, $shortageRestore, 2),
                 $correcting,
                 $admin->id,
             );
@@ -141,11 +143,11 @@ final class SettlementReversalService
                 $earning->save();
             }
 
-            // Soft-delete original pivot rows (cascade is hard delete in pivot — keep audit by deleting via model query).
-            SettlementOrder::query()
-                ->where('settlement_id', $original->id)
-                ->delete();
-
+            // Pivot rows on the original settlement are intentionally preserved.
+            // The original Settlement is flipped to Cancelled and cross-references
+            // the correcting settlement; the rows remain as audit of what was
+            // initially settled. Any consumer reading active settlement state
+            // must filter by status.
             $original->status = SettlementStatus::Cancelled->value;
             $original->notes = trim(
                 ($original->notes ?? '')

@@ -7,6 +7,7 @@ namespace App\Services\Order;
 use App\Enums\OrderActorType;
 use App\Enums\OrderErrorCode;
 use App\Enums\OrderStatus;
+use App\Events\OrderBroadcastToDriver;
 use App\Events\OrderStatusChanged;
 use App\Exceptions\Order\InvalidOrderTransitionException;
 use App\Exceptions\Order\OrderDomainException;
@@ -18,6 +19,8 @@ use LogicException;
 
 final class StateTransitionService
 {
+    public function __construct(private readonly BroadcastService $broadcasts) {}
+
     /**
      * @param  array<string, mixed>  $metadata
      */
@@ -76,8 +79,19 @@ final class StateTransitionService
         ]);
 
         $order->forceFill($updates);
+        $order->refresh();
 
-        event(new OrderStatusChanged($order->refresh(), $from, $to, $actorType, $actorId));
+        event(new OrderStatusChanged($order, $from, $to, $actorType, $actorId));
+
+        if ($to === OrderStatus::AwaitingDriver) {
+            foreach ($this->broadcasts->eligibleDriversFor($order) as $profile) {
+                event(new OrderBroadcastToDriver(
+                    $order,
+                    (int) $profile->user_id,
+                    $order->search_radius_tier,
+                ));
+            }
+        }
 
         return $order;
     }

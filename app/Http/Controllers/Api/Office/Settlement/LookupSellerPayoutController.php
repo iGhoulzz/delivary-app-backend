@@ -42,7 +42,7 @@ final class LookupSellerPayoutController extends Controller
         return response()->json([
             'seller' => [
                 'id' => $seller->public_id,
-                'name' => $seller->full_name ?? $seller->name,
+                'name' => $seller->fullName(),
                 'phone' => $seller->phone_number,
             ],
             'available_total' => $total,
