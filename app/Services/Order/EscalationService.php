@@ -6,6 +6,7 @@ namespace App\Services\Order;
 
 use App\Enums\OrderActorType;
 use App\Enums\OrderStatus;
+use App\Events\OrderBroadcastToDriver;
 use App\Models\Order;
 use App\Models\PlatformSetting;
 use Illuminate\Support\Facades\Cache;
@@ -13,7 +14,10 @@ use Illuminate\Support\Facades\DB;
 
 final class EscalationService
 {
-    public function __construct(private readonly StateTransitionService $transitions) {}
+    public function __construct(
+        private readonly StateTransitionService $transitions,
+        private readonly BroadcastService $broadcasts,
+    ) {}
 
     public function runSweep(): int
     {
@@ -103,5 +107,13 @@ final class EscalationService
             'delivery_fee_surcharge_percent' => $surchargePercent,
             'delivery_fee' => bcmul((string) $order->delivery_fee_base, $multiplier, 2),
         ])->save();
+
+        foreach ($this->broadcasts->eligibleDriversFor($order->refresh()) as $profile) {
+            event(new OrderBroadcastToDriver(
+                $order,
+                (int) $profile->user_id,
+                $tier,
+            ));
+        }
     }
 }
