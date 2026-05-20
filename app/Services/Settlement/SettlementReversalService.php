@@ -9,6 +9,7 @@ use App\Enums\DriverAccountTransactionReason;
 use App\Enums\SellerEarningStatus;
 use App\Enums\SettlementErrorCode;
 use App\Enums\SettlementStatus;
+use App\Events\DriverAccountUpdated;
 use App\Exceptions\Settlement\SettlementNotReversibleException;
 use App\Models\DriverAccount;
 use App\Models\DriverAccountTransaction;
@@ -151,9 +152,11 @@ final class SettlementReversalService
             $original->status = SettlementStatus::Cancelled->value;
             $original->notes = trim(
                 ($original->notes ?? '')
-                . "\nReversed by {$correcting->public_id}: {$reason}",
+                ."\nReversed by {$correcting->public_id}: {$reason}",
             );
             $original->save();
+
+            event(new DriverAccountUpdated($account->refresh()));
 
             return $correcting->fresh(['driver', 'office', 'processedByStaff']);
         });

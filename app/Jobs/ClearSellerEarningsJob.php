@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Enums\SellerEarningStatus;
+use App\Events\SellerEarningCleared;
 use App\Models\PlatformSetting;
 use App\Models\SellerEarning;
 use Illuminate\Bus\Queueable;
@@ -37,6 +38,13 @@ final class ClearSellerEarningsJob implements ShouldQueue
                         $earning->status = SellerEarningStatus::Available->value;
                         $earning->available_at = now();
                         $earning->save();
+                        $earning->loadMissing(['order:id,public_id,item_description']);
+
+                        event(new SellerEarningCleared(
+                            $earning,
+                            $this->availableTotalForSeller($earning->seller_user_id),
+                        ));
+
                         $advanced++;
                     } catch (Throwable $exception) {
                         Log::warning('ClearSellerEarningsJob row failed', [
@@ -49,5 +57,15 @@ final class ClearSellerEarningsJob implements ShouldQueue
 
             Log::info('ClearSellerEarningsJob complete', ['advanced_count' => $advanced]);
         });
+    }
+
+    private function availableTotalForSeller(int $sellerId): string
+    {
+        $total = SellerEarning::query()
+            ->forSeller($sellerId)
+            ->available()
+            ->sum('amount');
+
+        return number_format((float) $total, 2, '.', '');
     }
 }

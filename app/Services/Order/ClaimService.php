@@ -9,7 +9,9 @@ use App\Enums\OrderActorType;
 use App\Enums\OrderErrorCode;
 use App\Enums\OrderStatus;
 use App\Enums\VehicleType;
+use App\Events\OrderDriverAssigned;
 use App\Events\OrderStatusChanged;
+use App\Events\OrderStatusChangedPublic;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\DriverProfile;
 use App\Models\Order;
@@ -59,7 +61,10 @@ final class ClaimService
             $claimed = $order->refresh()->load(['driver.driverProfile']);
 
             event(new OrderStatusChanged($claimed, OrderStatus::AwaitingDriver, OrderStatus::Assigned, OrderActorType::Driver, $driver->id));
+            event(new OrderStatusChangedPublic($claimed, OrderStatus::AwaitingDriver, OrderStatus::Assigned, OrderActorType::Driver, $driver->id));
             event(new OrderStatusChanged($claimed, OrderStatus::Assigned, OrderStatus::DriverEnRoutePickup, OrderActorType::Driver, $driver->id));
+            event(new OrderStatusChangedPublic($claimed, OrderStatus::Assigned, OrderStatus::DriverEnRoutePickup, OrderActorType::Driver, $driver->id));
+            event(new OrderDriverAssigned($claimed, $profile->loadMissing(['user'])));
 
             return $claimed;
         });

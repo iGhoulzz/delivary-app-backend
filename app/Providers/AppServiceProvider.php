@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Events\OrderStatusChanged;
+use App\Listeners\BroadcastDatabaseNotification;
 use App\Listeners\BroadcastWithdrawnOnExit;
 use App\Models\PlatformSetting;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Notifications\Events\NotificationSent;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -24,6 +26,7 @@ final class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Event::listen(OrderStatusChanged::class, BroadcastWithdrawnOnExit::class);
+        Event::listen(NotificationSent::class, BroadcastDatabaseNotification::class);
 
         $this->configureRateLimiters();
     }

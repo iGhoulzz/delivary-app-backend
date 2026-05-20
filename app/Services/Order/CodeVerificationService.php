@@ -17,6 +17,7 @@ use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\PickupMethod;
 use App\Enums\SellerEarningStatus;
+use App\Events\DriverAccountUpdated;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\DriverAccount;
 use App\Models\DriverAccountTransaction;
@@ -355,6 +356,8 @@ final class CodeVerificationService
             'reference_id' => $order->id,
             'balance_after' => $account->{$column},
         ]);
+
+        event(new DriverAccountUpdated($account->refresh()));
     }
 
     private function distanceMeters(Point $a, Point $b): float

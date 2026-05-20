@@ -9,6 +9,7 @@ use App\Enums\OrderErrorCode;
 use App\Enums\OrderStatus;
 use App\Events\OrderBroadcastToDriver;
 use App\Events\OrderStatusChanged;
+use App\Events\OrderStatusChangedPublic;
 use App\Exceptions\Order\InvalidOrderTransitionException;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\Order;
@@ -82,6 +83,7 @@ final class StateTransitionService
         $order->refresh();
 
         event(new OrderStatusChanged($order, $from, $to, $actorType, $actorId));
+        event(new OrderStatusChangedPublic($order, $from, $to, $actorType, $actorId));
 
         if ($to === OrderStatus::AwaitingDriver) {
             foreach ($this->broadcasts->eligibleDriversFor($order) as $profile) {

@@ -786,3 +786,73 @@ After Codex shipped Tasks 1–7 + 12, 14–17, 21–22 of the settlement plan, C
 **Bug fixed during smoke:** `PayoutValidationException` + `SettlementNotReversibleException` initially had `public readonly SettlementErrorCode $code` constructor params, which shadowed `RuntimeException::$code` and crashed at construction. Renamed to `$errorCode` with matching accessor.
 
 **Final verification:** `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` → all 31 rollback-wrapped scenarios pass.
+
+---
+
+## 2026-05-20 Slice 13 - Realtime Reverb Phase 2 Broadcast Events
+
+Reviewed Claude's Phase 1 work from `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` before starting Codex Phase 2.
+
+Phase 1 confirmation:
+
+- `laravel/reverb` is installed.
+- `config/broadcasting.php` and `config/reverb.php` exist.
+- `/broadcasting/auth` is registered through `bootstrap/app.php -> withBroadcasting(..., ['middleware' => ['auth:sanctum']])`.
+- `routes/channels.php` has `user.{id}`, `order.{public_id}`, and `driver.{id}` authorization callbacks.
+- Broadcast-safe resources exist: `OrderForPartiesResource` and `DriverForOrderResource`.
+- Claude-owned driver broadcast events exist: `OrderBroadcastToDriver` and `OrderBroadcastWithdrawn`.
+- Phase 1 broadcast/channel tests pass.
+
+Phase 1 review note for Claude:
+
+- `OrderBroadcastToDriver::broadcastWith()` currently includes `type`, `tier`, and `order`, but does not include `expires_at`, even though the spec event catalog lists `{type, order, tier, expires_at}`. This did not block Codex Phase 2 because no Codex task depends on that field.
+- `OrderForPartiesResource` currently includes `driver.vehicle_type` but not `driver.vehicle_color`, while the Phase 1 broadcast-safe resource policy lists vehicle type/color in the driver block. This also did not block Codex Phase 2.
+
+Codex Phase 2 implementation:
+
+- Converted existing `OrderStatusChanged` into a queued `ShouldBroadcast` event on `private:order.{public_id}` with `OrderForPartiesResource`, `transition`, `$afterCommit = true`, and `broadcastQueue() = broadcasts`.
+- Added `OrderStatusChangedPublic` for `public:track.{tracking_token}` with `GuestTrackingResource`.
+- Added paired public status dispatches in `StateTransitionService` and `ClaimService`.
+- Closed the pre-existing `AdminAssignmentService` dispatch gap by dispatching private + public status events from `assign()` and `unassign()`.
+- Added `OrderDriverAssigned` for driver claim/admin assign, broadcasting sender-safe driver details through `DriverForOrderResource`.
+- Added `OrderDriverLocationUpdated` as `ShouldBroadcastNow`, dispatched after `PresenceService::updateLocation()` commits, not inside the DB transaction.
+- Added `DriverAccountUpdated` and wired driver-account mutation sites: `DriverAccountLedgerService`, `CodeVerificationService`, `SettlementService::process()`, and `SettlementReversalService::reverse()`.
+- Added `NotificationReceived` and `BroadcastDatabaseNotification` listener for Laravel database notifications.
+- Added `SellerEarningCleared` from `ClearSellerEarningsJob`, one event per earning advanced to `available`.
+
+Files added:
+
+- `app/Events/OrderStatusChangedPublic.php`
+- `app/Events/OrderDriverAssigned.php`
+- `app/Events/OrderDriverLocationUpdated.php`
+- `app/Events/DriverAccountUpdated.php`
+- `app/Events/NotificationReceived.php`
+- `app/Events/SellerEarningCleared.php`
+- `app/Listeners/BroadcastDatabaseNotification.php`
+- `tests/Unit/Events/RealtimePhase2EventsTest.php`
+- `tests/Unit/Listeners/BroadcastDatabaseNotificationTest.php`
+- `tests/Feature/Realtime/RealtimePhase2DispatchTest.php`
+
+Files updated:
+
+- `app/Events/OrderStatusChanged.php`
+- `app/Providers/AppServiceProvider.php`
+- `app/Services/Order/StateTransitionService.php`
+- `app/Services/Order/ClaimService.php`
+- `app/Services/Order/AdminAssignmentService.php`
+- `app/Services/Driver/PresenceService.php`
+- `app/Services/Driver/DriverAccountLedgerService.php`
+- `app/Services/Order/CodeVerificationService.php`
+- `app/Services/Settlement/SettlementService.php`
+- `app/Services/Settlement/SettlementReversalService.php`
+- `app/Jobs/ClearSellerEarningsJob.php`
+
+Verification:
+
+- `php artisan test tests/Feature/Broadcasting tests/Unit/Broadcasting tests/Feature/Realtime tests/Unit/Events tests/Unit/Listeners tests/Unit/Resources/Broadcast`: passed, 37 tests / 151 assertions.
+- `php artisan test`: passed, 42 tests / 159 assertions.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `php artisan route:list --path=broadcasting`: `/broadcasting/auth` present.
+- `vendor/bin/pint ...`: passed/fixed touched files.
+- `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` initially failed because `BROADCAST_CONNECTION=reverb` tried to connect to local Reverb on port 8080 and Reverb was not running.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` passed all 32 rollback-wrapped scenarios.
