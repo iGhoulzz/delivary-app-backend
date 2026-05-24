@@ -6,6 +6,7 @@ namespace App\Events;
 
 use App\Http\Resources\Order\BroadcastOrderResource;
 use App\Models\Order;
+use App\Models\PlatformSetting;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
@@ -51,6 +52,7 @@ final class OrderBroadcastToDriver implements ShouldBroadcast
         return [
             'type' => self::EVENT_NAME,
             'tier' => $this->tier,
+            'expires_at' => $this->expiresAt(),
             'order' => (new BroadcastOrderResource($this->order))->resolve(),
         ];
     }
@@ -58,5 +60,24 @@ final class OrderBroadcastToDriver implements ShouldBroadcast
     public function broadcastQueue(): string
     {
         return 'broadcasts';
+    }
+
+    /**
+     * When this broadcast cycle closes for the driver. Tracks the order's
+     * broadcast-window deadline (awaiting_driver_at + no_driver_after_minutes)
+     * so the driver app can stop showing the order once the platform-side
+     * timeout fires. Re-broadcasts on tier escalation refresh this same value
+     * since awaiting_driver_at is unchanged by EscalationService::applyTier().
+     */
+    private function expiresAt(): ?string
+    {
+        $startedAt = $this->order->awaiting_driver_at;
+        if ($startedAt === null) {
+            return null;
+        }
+
+        $timeoutMinutes = (int) PlatformSetting::get('broadcast.no_driver_after_minutes', 10);
+
+        return $startedAt->copy()->addMinutes($timeoutMinutes)->toIso8601String();
     }
 }

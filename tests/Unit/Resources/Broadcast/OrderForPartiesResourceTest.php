@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Enums\OrderStatus;
 use App\Http\Resources\Broadcast\OrderForPartiesResource;
+use App\Models\DriverProfile;
 use App\Models\Order;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -44,6 +45,11 @@ it('strips sender/receiver-only sensitive fields from broadcast payload', functi
 
 it('exposes driver block when an active driver is assigned', function (): void {
     $driver = User::factory()->create(['first_name' => 'Sami']);
+    DriverProfile::factory()->create([
+        'user_id' => $driver->id,
+        'vehicle_color' => 'white',
+    ]);
+
     $order = Order::factory()->create([
         'driver_id' => $driver->id,
         'status' => OrderStatus::DriverEnRoutePickup->value,
@@ -53,6 +59,7 @@ it('exposes driver block when an active driver is assigned', function (): void {
 
     expect($array['driver'])->not->toBeNull();
     expect($array['driver'])->toHaveKey('first_name', 'Sami');
+    expect($array['driver'])->toHaveKey('vehicle_color', 'white');
 });
 
 it('returns null driver block when no driver assigned', function (): void {

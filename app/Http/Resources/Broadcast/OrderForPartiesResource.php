@@ -90,6 +90,7 @@ final class OrderForPartiesResource extends JsonResource
         return [
             'first_name' => $driver?->first_name,
             'vehicle_type' => $profile?->vehicle_type?->value,
+            'vehicle_color' => $profile?->vehicle_color,
             'current_location' => $afterPickup && $profile
                 ? $this->point($profile->current_location)
                 : null,

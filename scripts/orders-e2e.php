@@ -2,6 +2,13 @@
 
 declare(strict_types=1);
 
+// Force null broadcaster so this smoke script doesn't try to reach a real
+// Reverb server. Phase 2 (OrderStatusChanged ShouldBroadcast) makes the
+// lifecycle dispatch broadcasts; with BROADCAST_CONNECTION=reverb in .env
+// and no local Reverb running, dispatches would fail. Setting null here
+// keeps the smoke self-contained regardless of dev env state.
+config(['broadcasting.default' => 'null']);
+
 use App\Enums\AccountStatus;
 use App\Enums\DeliveryFeeStatus;
 use App\Enums\DriverAccountBucket;
@@ -17,9 +24,17 @@ use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\ReturnFault;
 use App\Enums\ReturnReason;
+use App\Enums\SellerEarningStatus;
+use App\Enums\SellerPayoutStatus;
+use App\Enums\SettlementStatus;
 use App\Enums\VehicleType;
 use App\Exceptions\Order\OrderDomainException;
+use App\Exceptions\Settlement\EmptySettlementException;
+use App\Exceptions\Settlement\PayoutValidationException;
+use App\Exceptions\Settlement\SettlementExcessException;
+use App\Exceptions\Settlement\SettlementNotReversibleException;
 use App\Jobs\AbandonStaleOrdersJob;
+use App\Jobs\ClearSellerEarningsJob;
 use App\Models\DriverAccount;
 use App\Models\DriverAccountTransaction;
 use App\Models\DriverPresenceLog;
@@ -30,23 +45,11 @@ use App\Models\OfficeLocation;
 use App\Models\OfficeStaffAssignment;
 use App\Models\Order;
 use App\Models\PlatformSetting;
-use App\Enums\SellerEarningStatus;
-use App\Enums\SellerPayoutStatus;
-use App\Enums\SettlementStatus;
-use App\Exceptions\Settlement\EmptySettlementException;
-use App\Exceptions\Settlement\PayoutValidationException;
-use App\Exceptions\Settlement\SettlementExcessException;
-use App\Exceptions\Settlement\SettlementNotReversibleException;
-use App\Jobs\ClearSellerEarningsJob;
 use App\Models\Region;
 use App\Models\SellerEarning;
-use App\Models\SellerPayout;
 use App\Models\Settlement;
 use App\Models\SettlementOrder;
 use App\Models\User;
-use App\Services\Settlement\SellerPayoutService;
-use App\Services\Settlement\SettlementReversalService;
-use App\Services\Settlement\SettlementService;
 use App\Services\Driver\AutoOfflineService;
 use App\Services\Driver\PresenceService;
 use App\Services\Order\AdminAssignmentService;
@@ -60,6 +63,10 @@ use App\Services\Order\FailedDeliveryService;
 use App\Services\Order\QuoteService;
 use App\Services\Order\RetryService;
 use App\Services\Order\StateTransitionService;
+use App\Services\Settlement\SellerPayoutService;
+use App\Services\Settlement\SettlementReversalService;
+use App\Services\Settlement\SettlementService;
+use Carbon\Carbon;
 use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -464,11 +471,12 @@ try {
             'debt_balance' => $debt,
             'max_cash_liability' => '1000.00',
         ]);
+
         return $d;
     };
 
     // Helper: spin up a sale order in delivered state with a seller_earning row.
-    $freshEarning = static function (User $driver, User $seller, string $amount, string $status = 'pending_settlement', ?\Carbon\Carbon $clearedAt = null, ?\Carbon\Carbon $availableAt = null) use ($pickup, $dropoff): SellerEarning {
+    $freshEarning = static function (User $driver, User $seller, string $amount, string $status = 'pending_settlement', ?Carbon $clearedAt = null, ?Carbon $availableAt = null) use ($pickup, $dropoff): SellerEarning {
         $order = Order::create([
             'tracking_token' => (string) Str::ulid(),
             'order_type' => OrderType::P2pSale->value,
@@ -500,6 +508,7 @@ try {
             'delivered_at' => now(),
             'status_changed_at' => now(),
         ]);
+
         return SellerEarning::create([
             'order_id' => $order->id,
             'seller_user_id' => $seller->id,
@@ -569,7 +578,7 @@ try {
     $d24 = $freshDriver('0.00', '0.00', '0.00');
     $seller24 = $makeUser('Seller24', $uniquePhone(24), 'user');
     $earning24 = $freshEarning($d24, $seller24, '60.00', 'pending_clearance', now()->subHours(49));
-    (new ClearSellerEarningsJob())->handle();
+    (new ClearSellerEarningsJob)->handle();
     $earning24->refresh();
     $assert($earning24->status === SellerEarningStatus::Available, 'cron promoted earning to available');
     $assert($earning24->available_at !== null, 'available_at stamped');
@@ -578,7 +587,7 @@ try {
     $d25 = $freshDriver('0.00', '0.00', '0.00');
     $seller25 = $makeUser('Seller25', $uniquePhone(25), 'user');
     $earning25 = $freshEarning($d25, $seller25, '60.00', 'pending_clearance', now()->subHours(10));
-    (new ClearSellerEarningsJob())->handle();
+    (new ClearSellerEarningsJob)->handle();
     $earning25->refresh();
     $assert($earning25->status === SellerEarningStatus::PendingClearance, 'cron left fresh earning untouched');
 
