@@ -6,21 +6,21 @@ namespace App\Events;
 
 use App\Enums\OrderActorType;
 use App\Enums\OrderStatus;
-use App\Http\Resources\Broadcast\OrderForPartiesResource;
+use App\Http\Resources\Order\GuestTrackingResource;
 use App\Models\Order;
+use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-final class OrderStatusChanged implements ShouldBroadcast
+final class OrderStatusChangedPublic implements ShouldBroadcast
 {
     use Dispatchable;
     use InteractsWithSockets;
     use SerializesModels;
 
-    private const string EVENT_NAME = 'order.status_changed';
+    private const string EVENT_NAME = 'order.status_changed_public';
 
     public bool $afterCommit = true;
 
@@ -32,10 +32,10 @@ final class OrderStatusChanged implements ShouldBroadcast
         public readonly ?int $actorId = null,
     ) {}
 
-    /** @return array<int, PrivateChannel> */
+    /** @return array<int, Channel> */
     public function broadcastOn(): array
     {
-        return [new PrivateChannel('order.'.$this->order->public_id)];
+        return [new Channel('track.'.$this->order->tracking_token)];
     }
 
     public function broadcastAs(): string
@@ -50,23 +50,17 @@ final class OrderStatusChanged implements ShouldBroadcast
 
         return [
             'type' => self::EVENT_NAME,
-            'order' => (new OrderForPartiesResource($order))->resolve(),
-            'transition' => $this->transitionPayload(),
+            'order' => (new GuestTrackingResource($order))->resolve(),
+            'transition' => [
+                'from' => $this->fromStatus->value,
+                'to' => $this->toStatus->value,
+                'changed_at' => $this->order->status_changed_at?->toIso8601String(),
+            ],
         ];
     }
 
     public function broadcastQueue(): string
     {
         return 'broadcasts';
-    }
-
-    /** @return array<string, string|null> */
-    private function transitionPayload(): array
-    {
-        return [
-            'from' => $this->fromStatus->value,
-            'to' => $this->toStatus->value,
-            'changed_at' => $this->order->status_changed_at?->toIso8601String(),
-        ];
     }
 }

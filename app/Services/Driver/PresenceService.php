@@ -7,6 +7,8 @@ namespace App\Services\Driver;
 use App\Enums\DriverActivityStatus;
 use App\Enums\DriverStatus;
 use App\Enums\OrderErrorCode;
+use App\Enums\OrderStatus;
+use App\Events\OrderDriverLocationUpdated;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\DriverLocation;
 use App\Models\DriverPresenceLog;
@@ -15,6 +17,7 @@ use App\Models\Order;
 use App\Models\User;
 use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Support\Facades\DB;
+use LogicException;
 
 final class PresenceService
 {
@@ -73,7 +76,7 @@ final class PresenceService
     {
         $point = $this->pointFromPayload($location);
 
-        return DB::transaction(function () use ($driver, $location, $point): DriverProfile {
+        [$profile, $activeOrder] = DB::transaction(function () use ($driver, $location, $point): array {
             $profile = $this->profileFor($driver, lock: true);
 
             if ($profile->status !== DriverStatus::Active) {
@@ -91,8 +94,21 @@ final class PresenceService
 
             $this->recordLocationIfNeeded($driver, $point, $location);
 
-            return $profile->refresh();
+            return [$profile->refresh(), $this->activeLocationOrderFor($driver)];
         });
+
+        if ($activeOrder !== null) {
+            event(new OrderDriverLocationUpdated(
+                order: $activeOrder,
+                lat: (float) $location['lat'],
+                lng: (float) $location['lng'],
+                heading: isset($location['heading']) ? (float) $location['heading'] : null,
+                accuracy: isset($location['accuracy_meters']) ? (float) $location['accuracy_meters'] : null,
+                recordedAt: ($profile->last_location_updated_at ?? now())->toIso8601String(),
+            ));
+        }
+
+        return $profile;
     }
 
     private function profileFor(User $driver, bool $lock = false): DriverProfile
@@ -161,6 +177,27 @@ final class PresenceService
             ->forDriver($driver->id)
             ->activeForDriver()
             ->exists();
+    }
+
+    private function activeLocationOrderFor(User $driver): ?Order
+    {
+        $orders = Order::query()
+            ->forDriver($driver->id)
+            ->withStatus(
+                OrderStatus::Assigned,
+                OrderStatus::DriverEnRoutePickup,
+                OrderStatus::PickedUp,
+                OrderStatus::DriverEnRouteDropoff,
+                OrderStatus::DeliveryInProgress,
+            )
+            ->limit(2)
+            ->get();
+
+        if ($orders->count() > 1) {
+            throw new LogicException('Driver has multiple active orders eligible for location broadcast.');
+        }
+
+        return $orders->first();
     }
 
     private function pointInsideActiveServiceArea(Point $point): bool

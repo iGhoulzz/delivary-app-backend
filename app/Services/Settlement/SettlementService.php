@@ -8,6 +8,7 @@ use App\Enums\DriverAccountBucket;
 use App\Enums\DriverAccountTransactionReason;
 use App\Enums\SellerEarningStatus;
 use App\Enums\SettlementStatus;
+use App\Events\DriverAccountUpdated;
 use App\Exceptions\Settlement\EmptySettlementException;
 use App\Exceptions\Settlement\SettlementExcessException;
 use App\Models\DriverAccount;
@@ -95,7 +96,7 @@ final class SettlementService
                 && bccomp($earningsSnapshot, '0.00', 2) === 0
                 && bccomp($debtSnapshot, '0.00', 2) === 0
             ) {
-                throw new EmptySettlementException();
+                throw new EmptySettlementException;
             }
 
             $expectedNet = bcsub(
@@ -196,6 +197,8 @@ final class SettlementService
                     'amount_contributed' => (string) $earning->amount,
                 ]);
             }
+
+            event(new DriverAccountUpdated($account->refresh()));
 
             return $settlement->fresh(['driver', 'office', 'processedByStaff', 'orders']);
         });

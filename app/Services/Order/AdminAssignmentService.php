@@ -13,6 +13,9 @@ use App\Enums\OrderActorType;
 use App\Enums\OrderErrorCode;
 use App\Enums\OrderStatus;
 use App\Enums\VehicleType;
+use App\Events\OrderDriverAssigned;
+use App\Events\OrderStatusChanged;
+use App\Events\OrderStatusChangedPublic;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\DriverProfile;
 use App\Models\DriverStrike;
@@ -98,7 +101,13 @@ final class AdminAssignmentService
                 'force' => $force,
             ]);
 
-            return $order->refresh()->load(['driver.driverProfile', 'statusLogs']);
+            $assigned = $order->refresh()->load(['driver.driverProfile', 'statusLogs']);
+
+            event(new OrderStatusChanged($assigned, $from, OrderStatus::DriverEnRoutePickup, OrderActorType::Admin, $admin->id));
+            event(new OrderStatusChangedPublic($assigned, $from, OrderStatus::DriverEnRoutePickup, OrderActorType::Admin, $admin->id));
+            event(new OrderDriverAssigned($assigned, $profile->loadMissing(['user'])));
+
+            return $assigned;
         });
     }
 
@@ -181,7 +190,12 @@ final class AdminAssignmentService
                 'driver_fault' => $driverFault,
             ], $reason);
 
-            return $order->refresh()->load(['driver.driverProfile', 'statusLogs']);
+            $unassigned = $order->refresh()->load(['driver.driverProfile', 'statusLogs']);
+
+            event(new OrderStatusChanged($unassigned, $from, OrderStatus::AwaitingDriver, OrderActorType::Admin, $admin->id));
+            event(new OrderStatusChangedPublic($unassigned, $from, OrderStatus::AwaitingDriver, OrderActorType::Admin, $admin->id));
+
+            return $unassigned;
         });
     }
 
