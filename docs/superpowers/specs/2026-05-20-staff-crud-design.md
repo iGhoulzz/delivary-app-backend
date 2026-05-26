@@ -30,6 +30,8 @@ Building on the precedent set by the driver-onboarding milestone (face-to-face t
 | 6 | **Endpoint layout:** unified `/api/admin/staff/*` namespace. One controller pair, one policy, one resource. Role is a body field on create. | Less duplication than splitting into `/api/admin/admins` + `/api/admin/office-staff`. Lets admins list all internal accounts in one query. |
 | 7 | **Super admin tier:** deferred to its own milestone. | Current design's `reset-temp-password` is a force-reset that works on any staff in any state — handles all known recovery scenarios without needing a super-admin tier. |
 | 8 | **Self-modification:** an admin cannot suspend, deactivate, or reset their own password. Last admin protected against deactivation/suspension. | Prevents accidental self-lockout. System always has ≥1 active admin. |
+| 9 | **Suspension actually prevents login.** `AccountStatus::canLogin()` returns `false` for `Suspended` and `SuspendedUnpaidFees` (previously only `Banned` was blocked). `LoginService::attempt()` checks `canLogin()` before issuing a token. Suspended users get `AuthErrorCode::AccountNotLoginable` (new). Revoking tokens alone is insufficient — a suspended user could re-login. | Discovered in Codex's pre-implementation review. The Real-time milestone exposed that suspension wasn't actually enforceable; Slice A fixes both the enum and the service. |
+| 10 | **Slice A rejects `role=office_staff` via FormRequest validation.** During the Slice A → Slice B merge window, `CreateStaffRequest` only allows `role=admin`. Slice B amends the rule to widen it. This avoids exposing a half-built endpoint that throws an internal exception. | The API never lies — if the feature isn't fully there yet, validation rejects with a clean 422 + standard error format. |
 
 ---
 
@@ -105,10 +107,24 @@ public function down(): void
 - Add `'must_change_password'` to `$fillable`.
 - Add `'must_change_password' => 'boolean'` to `casts()`.
 
-### No changes
+### Schema changes from Slice B (Codex)
 
-- `office_staff_assignments` table is unchanged. Existing columns (`user_id`, `office_id`, `is_manager`, `assigned_at`, `removed_at`) are sufficient.
+Slice B's migration on `office_staff_assignments` does TWO things in one file:
+
+1. **Add `public_id` ULID column** (was missing — Codex verified).
+2. **Drop the existing `unique(['user_id', 'office_id'])` and replace it with a partial unique index:**
+   ```sql
+   DROP INDEX office_staff_assignments_user_id_office_id_unique;
+   CREATE UNIQUE INDEX office_staff_assignments_active_unique
+       ON office_staff_assignments (user_id, office_id)
+       WHERE removed_at IS NULL;
+   ```
+   Reason: the original unique constraint blocks re-attaching a staff member to an office after detach. Soft-removed rows must not count toward uniqueness. Postgres partial unique indexes are the standard fix.
+
+### No changes elsewhere
+
 - Spatie tables unchanged. We just `assignRole('admin')` / `assignRole('office_staff')` on new users.
+- Other tables (users, etc.) only get the `must_change_password` addition above.
 
 ---
 
@@ -683,7 +699,23 @@ Both worktrees currently share the `delivary_app_testing` Postgres DB (set in `p
 
 ---
 
-## 13. Open items Codex may raise
+## 13. Already-resolved corrections (do not relitigate)
+
+These were caught in Codex's pre-implementation review and are baked into the design above:
+
+1. **`auth.logout` route must be named** — current `routes/api.php` registers it without `->name('auth.logout')`. Slice A's Task 16 names it. Without the name, the `EnsurePasswordChanged` middleware allowlist never matches and logout is blocked for users with `must_change_password=true`.
+
+2. **`AccountStatus::canLogin()` must block `Suspended` (not just `Banned`)** and `LoginService::attempt()` must actually call it. Without this fix, suspending a staff via Slice A is meaningless — they re-login and get a new token in seconds. See §1 locked decision 9.
+
+3. **`office_staff_assignments.public_id` is missing.** Slice B's migration adds it.
+
+4. **Existing `unique(user_id, office_id)` blocks soft-removal re-attach.** Slice B's migration drops it and creates a partial unique index `WHERE removed_at IS NULL`. See §3.
+
+5. **Slice A's `LogicException("slice-B")` stub for office_staff creation would crash the API with a 500 between merges.** Slice A's `CreateStaffRequest` instead validates `role` as `Rule::in(['admin'])` only; Slice B amends the rule. The service-level stub is removed because the FormRequest layer rejects office_staff before the service is called. See §1 locked decision 10.
+
+---
+
+## 14. Open items Codex may raise
 
 If Codex hits any of these during implementation, **stop and ask** (do not guess):
 
@@ -695,7 +727,7 @@ If Codex hits any of these during implementation, **stop and ask** (do not guess
 
 ---
 
-## 14. Reference: existing milestones
+## 15. Reference: existing milestones
 
 For context on how previous milestones organized themselves, see:
 - `docs/superpowers/specs/2026-05-07-auth-design.md` — auth + token + OTP infra (we reuse the SMS abstraction conceptually but don't use SMS in this milestone)

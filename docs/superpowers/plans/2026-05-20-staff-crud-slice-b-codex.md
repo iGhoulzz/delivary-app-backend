@@ -77,7 +77,12 @@ If any of those is missing, add them. Otherwise skip to Task 2.
 
 - [ ] **Step 2b: If output is NO**
 
-Create the migration:
+Create the migration. This migration does THREE things in one file:
+1. Add `public_id` ULID column (was missing).
+2. **Drop the existing `unique(['user_id', 'office_id'])` constraint** — it blocks re-attach after soft-removal.
+3. **Add a partial unique index** `(user_id, office_id) WHERE removed_at IS NULL` — uniqueness applies only to active assignments.
+
+Reason: spec §13 item 4 — Codex's pre-implementation review confirmed the existing unique conflicts with the soft-removal design. Soft-removed rows must not count for uniqueness.
 
 ```php
 <?php
@@ -86,17 +91,19 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
+        // 1. Add public_id column (nullable for backfill)
         Schema::table('office_staff_assignments', function (Blueprint $table): void {
             $table->ulid('public_id')->nullable()->after('id');
         });
 
-        // Backfill existing rows
+        // 2. Backfill existing rows
         \App\Models\OfficeStaffAssignment::query()
             ->whereNull('public_id')
             ->orderBy('id')
@@ -107,14 +114,30 @@ return new class extends Migration
                 }
             });
 
+        // 3. Add unique constraint on public_id + make non-nullable
         Schema::table('office_staff_assignments', function (Blueprint $table): void {
             $table->ulid('public_id')->nullable(false)->unique()->change();
         });
+
+        // 4. Drop the old unique(user_id, office_id) constraint — conflicts with soft-removal
+        Schema::table('office_staff_assignments', function (Blueprint $table): void {
+            $table->dropUnique(['user_id', 'office_id']);
+        });
+
+        // 5. Create the partial unique index — only active rows count toward uniqueness
+        DB::statement(<<<'SQL'
+            CREATE UNIQUE INDEX office_staff_assignments_active_unique
+                ON office_staff_assignments (user_id, office_id)
+                WHERE removed_at IS NULL
+        SQL);
     }
 
     public function down(): void
     {
+        DB::statement('DROP INDEX IF EXISTS office_staff_assignments_active_unique');
+
         Schema::table('office_staff_assignments', function (Blueprint $table): void {
+            $table->unique(['user_id', 'office_id']);
             $table->dropUnique(['public_id']);
             $table->dropColumn('public_id');
         });
@@ -1133,6 +1156,25 @@ git commit -m "refactor(staff): swap RuntimeException for StaffDomainException"
 **Files:**
 - Modify: `app/Services/Staff/StaffService.php`
 
+- [ ] **Step 0: Widen `CreateStaffRequest` validation to accept office_staff**
+
+In `app/Http/Requests/Staff/CreateStaffRequest.php`, change the `role` and `office_assignments` rules:
+
+```php
+// Was (Slice A): Rule::in(['admin']) + 'prohibited'
+'role' => ['required', Rule::in(['admin', 'office_staff'])],
+'office_assignments' => [
+    'required_if:role,office_staff',
+    'prohibited_if:role,admin',
+    'array',
+    'min:1',
+],
+'office_assignments.*.office_id' => ['required', 'integer', 'exists:office_locations,id'],
+'office_assignments.*.is_manager' => ['required', 'boolean'],
+```
+
+Remove the Slice A "widens this to" comment lines.
+
 - [ ] **Step 1: Wire `OfficeAssignmentService` into `StaffService`**
 
 In `StaffService`, add to constructor:
@@ -1148,13 +1190,13 @@ Add `use App\Services\Staff\OfficeAssignmentService;` (might already be present 
 
 - [ ] **Step 2: Replace the stub**
 
-Find this block:
+Find the defensive guard block in `StaffService::create()` (introduced by Slice A's revised plan):
 
 ```php
-if ($input->role === 'office_staff') {
-    // Slice B replaces this stub...
-    throw new LogicException(
-        'office_staff creation stubbed in slice-B; assigning role then aborting transaction.'
+if ($input->role === 'office_staff' && $input->officeAssignments !== []) {
+    // Slice B replaces this with: $this->officeAssignments->attachMany($user, $input->officeAssignments);
+    throw new \RuntimeException(
+        'office_staff creation requires Slice B (OfficeAssignmentService::attachMany)'
     );
 }
 ```

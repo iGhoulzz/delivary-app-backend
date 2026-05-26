@@ -22,6 +22,7 @@
 
 - `database/migrations/2026_05_20_000001_add_must_change_password_to_users.php`
 - `app/Enums/StaffErrorCode.php`
+- `app/Enums/AuthErrorCode.php` — add new case `AccountNotLoginable` (modify existing file)
 - `app/Exceptions/Staff/StaffDomainException.php`
 - `app/Services/Staff/TempPasswordGenerator.php`
 - `app/Services/Staff/StaffService.php`
@@ -41,8 +42,10 @@
 **Modified files:**
 
 - `app/Models/User.php` — add `must_change_password` to `$fillable` + `casts()`; add `activeOfficeAssignments()` relation
+- `app/Enums/AccountStatus.php` — `canLogin()` returns false for `Suspended` and `SuspendedUnpaidFees`
+- `app/Services/Auth/LoginService.php` — call `$user->account_status->canLogin()` before issuing token; return `AuthErrorCode::AccountNotLoginable` if false
 - `bootstrap/app.php` — register `staff.password_change_required` middleware alias + register `StaffPolicy`
-- `routes/api.php` — add staff route group + change-from-temp route + apply `staff.password_change_required` to existing sanctum groups
+- `routes/api.php` — add staff route group + change-from-temp route + apply `staff.password_change_required` to existing sanctum groups + **name the logout route `auth.logout`**
 - `app/Providers/AppServiceProvider.php` — add `password_change_temp` rate limiter
 
 ---
@@ -100,6 +103,165 @@ Add `'must_change_password'` to `$fillable` (find the existing array and append)
 ```bash
 git add database/migrations/2026_05_20_000001_add_must_change_password_to_users.php app/Models/User.php
 git commit -m "feat(staff): add users.must_change_password column"
+```
+
+---
+
+## Task 1.5: Fix `AccountStatus::canLogin()` + `LoginService` to block suspended login
+
+**Why:** Suspended users currently can re-login immediately after their tokens are revoked. Suspension is not enforceable without this fix. Flagged in Codex's pre-implementation review (spec §13).
+
+**Files:**
+- Modify: `app/Enums/AccountStatus.php`
+- Modify: `app/Enums/AuthErrorCode.php`
+- Modify: `app/Services/Auth/LoginService.php`
+- Create: `tests/Feature/Auth/LoginSuspendedRejectionTest.php`
+
+- [ ] **Step 1: Update `AccountStatus::canLogin()`**
+
+In `app/Enums/AccountStatus.php`, change `canLogin()`:
+
+```php
+public function canLogin(): bool
+{
+    return $this === self::Active || $this === self::PendingVerification;
+}
+```
+
+Rationale: only `Active` and `PendingVerification` (for OTP completion) can authenticate. `Suspended`, `SuspendedUnpaidFees`, and `Banned` all block login.
+
+- [ ] **Step 2: Add `AccountNotLoginable` to `AuthErrorCode`**
+
+In `app/Enums/AuthErrorCode.php`, add a new case (alphabetical with the rest):
+
+```php
+case AccountNotLoginable = 'ACCOUNT_NOT_LOGINABLE';
+```
+
+If the enum has an `httpStatus()` method, map this case to 403.
+
+- [ ] **Step 3: Write failing feature test**
+
+Create `tests/Feature/Auth/LoginSuspendedRejectionTest.php`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+use App\Enums\AccountStatus;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
+
+uses(RefreshDatabase::class);
+
+it('rejects login for a suspended user', function (): void {
+    User::factory()->create([
+        'phone_number' => '+218910000050',
+        'password' => Hash::make('correctPass1'),
+        'account_status' => AccountStatus::Suspended->value,
+        'phone_verified_at' => now(),
+    ]);
+
+    $response = $this->postJson('/api/auth/login', [
+        'phone_number' => '+218910000050',
+        'password' => 'correctPass1',
+    ]);
+
+    expect($response->status())->toBe(403);
+    expect($response->json('error'))->toBe('ACCOUNT_NOT_LOGINABLE');
+});
+
+it('rejects login for a banned user', function (): void {
+    User::factory()->create([
+        'phone_number' => '+218910000051',
+        'password' => Hash::make('correctPass1'),
+        'account_status' => AccountStatus::Banned->value,
+        'phone_verified_at' => now(),
+    ]);
+
+    $response = $this->postJson('/api/auth/login', [
+        'phone_number' => '+218910000051',
+        'password' => 'correctPass1',
+    ]);
+
+    expect($response->status())->toBe(403);
+});
+
+it('still allows an active user to log in', function (): void {
+    User::factory()->create([
+        'phone_number' => '+218910000052',
+        'password' => Hash::make('correctPass1'),
+        'account_status' => AccountStatus::Active->value,
+        'phone_verified_at' => now(),
+    ]);
+
+    $response = $this->postJson('/api/auth/login', [
+        'phone_number' => '+218910000052',
+        'password' => 'correctPass1',
+    ]);
+
+    expect($response->status())->toBe(200);
+    expect($response->json('token'))->toBeString();
+});
+```
+
+- [ ] **Step 4: Run test — expect failure**
+
+```bash
+vendor/bin/pest tests/Feature/Auth/LoginSuspendedRejectionTest.php
+```
+
+Expected: tests 1 + 2 fail (suspended/banned currently succeed). Test 3 passes already.
+
+- [ ] **Step 5: Update `LoginService::attempt()`**
+
+In `app/Services/Auth/LoginService.php`, add the canLogin check AFTER the password verification but BEFORE creating the token:
+
+```php
+public function attempt(string $phone, string $password): array
+{
+    $user = User::where('phone_number', $phone)->first();
+
+    if ($user === null || ! Hash::check($password, (string) $user->password)) {
+        return ['error' => AuthErrorCode::InvalidCredentials];
+    }
+
+    if ($user->phone_verified_at === null) {
+        return ['error' => AuthErrorCode::PhoneNotVerified];
+    }
+
+    if (! $user->account_status->canLogin()) {
+        return ['error' => AuthErrorCode::AccountNotLoginable];
+    }
+
+    $token = $user->createToken('auth')->plainTextToken;
+
+    return ['user' => $user, 'token' => $token];
+}
+```
+
+Order matters: password check first (anti-enumeration), then phone-verified, then suspension/ban. This way a wrong-password attempt against a suspended account still returns `InvalidCredentials` — doesn't reveal the account exists.
+
+- [ ] **Step 6: Verify the LoginController surfaces the new error code**
+
+Check `app/Http/Controllers/Api/Auth/LoginController.php` — confirm the `error` branch of LoginService's return is mapped to an HTTP response. If the existing controller handles `AuthErrorCode` cases generically via a match expression, the new case just needs an entry in that match. Add 403 status for `AccountNotLoginable`.
+
+- [ ] **Step 7: Run tests — expect pass**
+
+```bash
+vendor/bin/pest tests/Feature/Auth/LoginSuspendedRejectionTest.php
+```
+
+Expected: 3/3 pass.
+
+- [ ] **Step 8: Pint + commit**
+
+```bash
+vendor/bin/pint app/Enums/AccountStatus.php app/Enums/AuthErrorCode.php app/Services/Auth/LoginService.php tests/Feature/Auth
+git add app/Enums/AccountStatus.php app/Enums/AuthErrorCode.php app/Services/Auth/LoginService.php tests/Feature/Auth/LoginSuspendedRejectionTest.php
+git commit -m "fix(auth): suspended and banned users cannot log in (canLogin guard + AccountNotLoginable code)"
 ```
 
 ---
@@ -422,21 +584,10 @@ it('creates an admin user with a generated temp password', function (): void {
     expect(Hash::check($result['temporary_password'], $result['user']->password))->toBeTrue();
 });
 
-it('throws LogicException for office_staff creation (slice B fills this in)', function (): void {
-    $actor = User::factory()->create();
-    $actor->assignRole('admin');
-
-    $service = app(StaffService::class);
-
-    $service->create(new CreateStaffInput(
-        phoneNumber: '+218910000011',
-        firstName: 'Yusuf',
-        lastName: 'Smith',
-        email: null,
-        role: 'office_staff',
-        officeAssignments: [['office_id' => 1, 'is_manager' => false]],
-    ), $actor);
-})->throws(LogicException::class, 'slice-B');
+// Office_staff creation is gated by FormRequest validation during Slice A
+// (CreateStaffRequest::rules() only accepts role=admin). Slice B widens the
+// rule. So there's no direct service-level test for office_staff here —
+// that test moves to Slice B once it's wired.
 ```
 
 - [ ] **Step 2: Run test — expect failure**
@@ -493,10 +644,14 @@ final class StaffService
 
             $user->assignRole($input->role);
 
-            if ($input->role === 'office_staff') {
-                // Slice B replaces this stub with $this->officeAssignments->attachMany($user, $input->officeAssignments).
-                throw new LogicException(
-                    'office_staff creation stubbed in slice-B; assigning role then aborting transaction.'
+            // Slice B note: during Slice A, CreateStaffRequest validation rejects
+            // role=office_staff with a 422, so this branch is never reached. Slice B
+            // widens the validation AND adds the OfficeAssignmentService::attachMany
+            // call inside this transaction. Defensive runtime guard:
+            if ($input->role === 'office_staff' && $input->officeAssignments !== []) {
+                // Slice B replaces this with: $this->officeAssignments->attachMany($user, $input->officeAssignments);
+                throw new \RuntimeException(
+                    'office_staff creation requires Slice B (OfficeAssignmentService::attachMany)'
                 );
             }
 
@@ -1244,15 +1399,14 @@ final class CreateStaffRequest extends FormRequest
             'first_name' => ['required', 'string', 'max:60'],
             'last_name' => ['required', 'string', 'max:60'],
             'email' => ['nullable', 'email', 'max:120', 'unique:users,email'],
-            'role' => ['required', Rule::in(['admin', 'office_staff'])],
+            // Slice A: admin-only. Slice B widens this to Rule::in(['admin', 'office_staff'])
+            // when its OfficeAssignmentService lands. See spec §1 decision 10.
+            'role' => ['required', Rule::in(['admin'])],
             'office_assignments' => [
-                'required_if:role,office_staff',
-                'prohibited_if:role,admin',
-                'array',
-                'min:1',
+                'prohibited',
+                // Slice B replaces 'prohibited' with:
+                //   'required_if:role,office_staff', 'prohibited_if:role,admin', 'array', 'min:1'
             ],
-            'office_assignments.*.office_id' => ['required', 'integer', 'exists:office_locations,id'],
-            'office_assignments.*.is_manager' => ['required', 'boolean'],
         ];
     }
 
@@ -1770,6 +1924,22 @@ Route::middleware('auth:sanctum')
     ->middleware('throttle:password_change_temp')
     ->name('me.password.change-from-temp');
 ```
+
+- [ ] **Step 1.5: Name the existing logout route `auth.logout`**
+
+Find the existing logout route in `routes/api.php` (currently around line 88):
+
+```php
+Route::post('logout', LogoutController::class);
+```
+
+Replace with:
+
+```php
+Route::post('logout', LogoutController::class)->name('auth.logout');
+```
+
+**Why:** the `EnsurePasswordChanged` middleware's allowlist references `auth.logout` by name. Without the name, a user with `must_change_password=true` cannot log out (blocked by middleware) and is permanently stuck. Flagged in Codex's pre-implementation review (spec §13 item 1).
 
 - [ ] **Step 2: Apply `staff.password_change_required` to existing sanctum groups**
 
