@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\Order\OrderDomainException;
+use App\Exceptions\Staff\StaffDomainException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -34,6 +35,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // error code's mapped HTTP status. Mirrors how driver-domain
         // exceptions are surfaced from controllers via OrderErrorCode.
         $exceptions->render(function (OrderDomainException $e): JsonResponse {
+            return new JsonResponse($e->toResponse(), $e->httpStatus());
+        });
+
+        $exceptions->render(function (StaffDomainException $e): JsonResponse {
             return new JsonResponse($e->toResponse(), $e->httpStatus());
         });
     })->create();
