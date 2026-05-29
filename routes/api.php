@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as Adm
 use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as AdminSettlementListSettlementsController;
 use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as AdminSettlementReverseSettlementController;
 use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
+use App\Http\Controllers\Api\Admin\Staff\StaffController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
 use App\Http\Controllers\Api\Auth\LogoutController;
@@ -27,6 +28,7 @@ use App\Http\Controllers\Api\Driver\ProfileController as DriverViewProfileContro
 use App\Http\Controllers\Api\Driver\RegionController as DriverRegionController;
 use App\Http\Controllers\Api\Driver\Settlement\ListSettlementsController;
 use App\Http\Controllers\Api\Driver\Settlement\ShowSettlementController;
+use App\Http\Controllers\Api\Me\ChangeFromTempPasswordController;
 use App\Http\Controllers\Api\Me\Driver\DriverProfileController as MeDriverProfileController;
 use App\Http\Controllers\Api\Me\Driver\PreregistrationController;
 use App\Http\Controllers\Api\Me\Order\CancelController;
@@ -82,16 +84,16 @@ Route::prefix('auth')->group(function (): void {
         ->middleware('throttle:password_reset_email');
 
     // Auth-required (Sanctum bearer)
-    Route::middleware('auth:sanctum')->group(function (): void {
+    Route::middleware(['auth:sanctum', 'staff.password_change_required'])->group(function (): void {
         Route::get('me', MeController::class);
         Route::post('email/verify-resend', [EmailVerificationController::class, 'resend']);
-        Route::post('logout', LogoutController::class);
+        Route::post('logout', LogoutController::class)->name('auth.logout');
 
     });
 });
 
 // ─── /me — profile (auth-required) ───────────────────────────────────────
-Route::middleware('auth:sanctum')->prefix('me')->group(function (): void {
+Route::middleware(['auth:sanctum', 'staff.password_change_required'])->prefix('me')->group(function (): void {
     Route::get('profile', [ProfileController::class, 'show']);
     Route::patch('profile', [ProfileController::class, 'update']);
 
@@ -124,7 +126,7 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function (): void {
 });
 
 // ─── /orders — order lifecycle (auth-required) ───────────────────────────
-Route::middleware('auth:sanctum')->prefix('orders')->group(function (): void {
+Route::middleware(['auth:sanctum', 'staff.password_change_required'])->prefix('orders')->group(function (): void {
     Route::post('quote', QuoteController::class)
         ->middleware('throttle:orders_quote');
     Route::post('/', [OrderController::class, 'store'])
@@ -135,7 +137,7 @@ Route::middleware('auth:sanctum')->prefix('orders')->group(function (): void {
 Route::get('track/{trackingToken}', GuestTrackingController::class)
     ->middleware('throttle:guest_tracking');
 
-Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/drivers')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_required'])->prefix('office/drivers')->group(function (): void {
     Route::get('/', [DriverOnboardingController::class, 'index']);
     Route::post('lookup', [DriverOnboardingController::class, 'lookup']);
     Route::post('onboard', [DriverOnboardingController::class, 'onboard']);
@@ -145,7 +147,7 @@ Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/drivers
     Route::delete('{driverProfile}/documents/{driverDocument}', [DriverDocumentController::class, 'destroy']);
 });
 
-Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/orders')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_required'])->prefix('office/orders')->group(function (): void {
     Route::get('/', [OfficeOrderController::class, 'index'])
         ->middleware('throttle:office_orders_read');
     Route::get('{order:public_id}', [OfficeOrderController::class, 'show'])
@@ -157,7 +159,7 @@ Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office/orders'
 });
 
 // ─── /office — settlement & seller payouts ──────────────────────────────
-Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_required'])->prefix('office')->group(function (): void {
     Route::get('drivers/{driverPublicId}/settlement-preview', OfficeSettlementPreviewSettlementController::class)
         ->name('office.settlements.preview');
 
@@ -177,7 +179,7 @@ Route::middleware(['auth:sanctum', 'role:office_staff'])->prefix('office')->grou
 });
 
 // ─── /admin/drivers — admin driver lifecycle management ─────────────────
-Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/drivers')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])->prefix('admin/drivers')->group(function (): void {
     Route::get('/', [AdminDriverController::class, 'index']);
     Route::get('{driverProfile}', [AdminDriverController::class, 'show']);
     Route::post('{driverProfile}/approve', [AdminDriverController::class, 'approve']);
@@ -187,7 +189,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/drivers')->grou
 });
 
 // /admin/orders - admin order lifecycle management
-Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/orders')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])->prefix('admin/orders')->group(function (): void {
     Route::get('/', [AdminOrderController::class, 'index']);
     Route::get('{order:public_id}', [AdminOrderController::class, 'show']);
     Route::post('{order:public_id}/assign', [AdminOrderController::class, 'assign']);
@@ -199,7 +201,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin/orders')->group
 });
 
 // ─── /admin — settlement & seller payouts ───────────────────────────────
-Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])->prefix('admin')->group(function (): void {
     Route::get('settlements', AdminSettlementListSettlementsController::class)
         ->name('admin.settlements.index');
     Route::get('settlements/{settlement:public_id}', AdminSettlementShowSettlementController::class)
@@ -212,7 +214,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->prefix('admin')->group(functi
 });
 
 // /driver - driver self-service
-Route::middleware(['auth:sanctum', 'role:driver'])->prefix('driver')->group(function (): void {
+Route::middleware(['auth:sanctum', 'role:driver', 'staff.password_change_required'])->prefix('driver')->group(function (): void {
     Route::get('profile', DriverViewProfileController::class);
     Route::get('account', DriverAccountController::class);
     Route::get('settlements', ListSettlementsController::class)
@@ -245,3 +247,24 @@ Route::middleware(['auth:sanctum', 'role:driver'])->prefix('driver')->group(func
             ->middleware('throttle:driver_action');
     });
 });
+
+// ─── /admin/staff — admin manages internal accounts (admins + office_staff) ──
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])
+    ->prefix('admin/staff')
+    ->name('admin.staff.')
+    ->group(function (): void {
+        Route::get('/', [StaffController::class, 'index'])->name('index');
+        Route::post('/', [StaffController::class, 'store'])->name('store');
+        Route::get('/{staff}', [StaffController::class, 'show'])->name('show');
+        Route::patch('/{staff}', [StaffController::class, 'update'])->name('update');
+        Route::post('/{staff}/suspend', [StaffController::class, 'suspend'])->name('suspend');
+        Route::post('/{staff}/reinstate', [StaffController::class, 'reinstate'])->name('reinstate');
+        Route::post('/{staff}/deactivate', [StaffController::class, 'deactivate'])->name('deactivate');
+        Route::post('/{staff}/reset-temp-password', [StaffController::class, 'resetTempPassword'])->name('reset-temp-password');
+    });
+
+// ─── /me/password/change-from-temp — bypasses the password-change-required middleware ──
+Route::middleware('auth:sanctum')
+    ->post('/me/password/change-from-temp', ChangeFromTempPasswordController::class)
+    ->middleware('throttle:password_change_temp')
+    ->name('me.password.change-from-temp');

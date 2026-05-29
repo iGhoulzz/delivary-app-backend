@@ -10,11 +10,14 @@ use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\Staff\StaffResource;
 use App\Models\User;
 use App\Services\Staff\StaffService;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 final class StaffController extends Controller
 {
+    use AuthorizesRequests;
+
     public function __construct(private readonly StaffService $staff) {}
 
     public function index(): AnonymousResourceCollection
