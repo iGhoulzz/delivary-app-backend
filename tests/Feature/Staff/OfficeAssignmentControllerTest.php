@@ -45,7 +45,7 @@ it('attaches an office to an office staff user via post', function (): void {
     expect($response->status())->toBe(201);
     expect($response->json('office.name'))->toBe($office->name);
     expect($response->json('is_manager'))->toBeTrue();
-})->skip('Slice B feature routes are wired after Slice A merges.');
+});
 
 it('rejects attaching an office to an admin user', function (): void {
     $admin = User::factory()->create();
@@ -62,7 +62,7 @@ it('rejects attaching an office to an admin user', function (): void {
 
     expect($response->status())->toBe(422);
     expect($response->json('error'))->toBe('ROLE_MISMATCH_FOR_OFFICE_ASSIGN');
-})->skip('Slice B feature routes are wired after Slice A merges.');
+});
 
 it('rejects duplicate active assignment with conflict', function (): void {
     $admin = User::factory()->create();
@@ -87,7 +87,7 @@ it('rejects duplicate active assignment with conflict', function (): void {
 
     expect($response->status())->toBe(409);
     expect($response->json('error'))->toBe('OFFICE_ASSIGNMENT_DUPLICATE');
-})->skip('Slice B feature routes are wired after Slice A merges.');
+});
 
 it('detaches an assignment via delete', function (): void {
     $admin = User::factory()->create();
@@ -116,7 +116,7 @@ it('detaches an assignment via delete', function (): void {
 
     expect($response->status())->toBe(204);
     expect($assignment->fresh()->removed_at)->not->toBeNull();
-})->skip('Slice B feature routes are wired after Slice A merges.');
+});
 
 it('rejects last assignment detach', function (): void {
     $admin = User::factory()->create();
@@ -139,7 +139,7 @@ it('rejects last assignment detach', function (): void {
 
     expect($response->status())->toBe(422);
     expect($response->json('error'))->toBe('OFFICE_ASSIGNMENT_LAST_REQUIRED');
-})->skip('Slice B feature routes are wired after Slice A merges.');
+});
 
 it('does not detach another staff users assignment', function (): void {
     $admin = User::factory()->create();
@@ -164,4 +164,4 @@ it('does not detach another staff users assignment', function (): void {
 
     expect($response->status())->toBe(404);
     expect($assignment->fresh()->removed_at)->toBeNull();
-})->skip('Slice B feature routes are wired after Slice A merges.');
+});

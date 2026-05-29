@@ -32,13 +32,7 @@ final class StaffResource extends JsonResource
             'email_verified_at' => $u->email_verified_at?->toIso8601String(),
             'office_assignments' => $this->whenLoaded(
                 'activeOfficeAssignments',
-                fn () => $u->activeOfficeAssignments->map(fn ($a) => [
-                    'id' => $a->id,
-                    'office_id' => $a->office_id,
-                    'is_manager' => (bool) $a->is_manager,
-                    'assigned_at' => $a->assigned_at?->toIso8601String(),
-                    'removed_at' => $a->removed_at?->toIso8601String(),
-                ]),
+                fn () => OfficeAssignmentResource::collection($u->activeOfficeAssignments),
             ),
             'created_at' => $u->created_at?->toIso8601String(),
             'updated_at' => $u->updated_at?->toIso8601String(),

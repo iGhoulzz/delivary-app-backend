@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Exceptions\Staff\StaffDomainException;
 use App\Models\OfficeLocation;
 use App\Models\OfficeStaffAssignment;
 use App\Models\User;
@@ -57,7 +58,7 @@ it('refuses to attach when user is not office staff', function (): void {
     $office = makeStaffCrudOffice();
 
     expect(fn () => app(OfficeAssignmentService::class)->attach($user, $office->id, false))
-        ->toThrow(RuntimeException::class, 'ROLE_MISMATCH_FOR_OFFICE_ASSIGN');
+        ->toThrow(StaffDomainException::class, 'User is not office staff.');
 });
 
 it('refuses duplicate active assignments', function (): void {
@@ -67,7 +68,7 @@ it('refuses duplicate active assignments', function (): void {
     app(OfficeAssignmentService::class)->attach($user, $office->id, false);
 
     expect(fn () => app(OfficeAssignmentService::class)->attach($user, $office->id, false))
-        ->toThrow(RuntimeException::class, 'OFFICE_ASSIGNMENT_DUPLICATE');
+        ->toThrow(StaffDomainException::class, 'Office assignment is already active.');
 });
 
 it('allows reattaching an office after the previous assignment was removed', function (): void {
@@ -105,7 +106,7 @@ it('refuses to detach when it would leave zero active assignments', function ():
     $assignment = app(OfficeAssignmentService::class)->attach($user, $office->id, false);
 
     expect(fn () => app(OfficeAssignmentService::class)->detach($user, $assignment))
-        ->toThrow(RuntimeException::class, 'OFFICE_ASSIGNMENT_LAST_REQUIRED');
+        ->toThrow(StaffDomainException::class, 'Cannot remove the last active office assignment.');
 });
 
 it('does not detach an assignment belonging to another staff user', function (): void {
@@ -148,5 +149,5 @@ it('attachMany refuses duplicate office ids in the same payload', function (): v
     expect(fn () => app(OfficeAssignmentService::class)->attachMany($user, [
         ['office_id' => $office->id, 'is_manager' => false],
         ['office_id' => $office->id, 'is_manager' => true],
-    ]))->toThrow(RuntimeException::class, 'OFFICE_ASSIGNMENT_DUPLICATE');
+    ]))->toThrow(StaffDomainException::class, 'Office assignment is already active.');
 });

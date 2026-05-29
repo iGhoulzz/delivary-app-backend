@@ -115,8 +115,7 @@ try {
     $reinstated = $staffService->reinstate($officeStaff['user'], $rootAdmin);
     $deactivated = $staffService->deactivate($reinstated, $rootAdmin);
     $assert($deactivated->account_status === AccountStatus::Suspended, 'deactivate returns suspended staff');
-    // Phase 2: uncomment once StaffService::deactivate() removes active assignments.
-    // $assert($deactivated->activeOfficeAssignments()->count() === 0, 'all assignments removed');
+    $assert($deactivated->activeOfficeAssignments()->count() === 0, 'all assignments removed');
 
     echo "Scenario 6: guards against self-modify and last-admin\n";
     try {
@@ -127,6 +126,16 @@ try {
     }
 
     $staffService->suspend($coAdmin->fresh(), $rootAdmin);
+    $staffService->suspend($created['user']->fresh(), $rootAdmin);
+    $adminRole = Role::findByName('admin', 'web');
+    $adminIds = DB::table('model_has_roles')
+        ->where('role_id', $adminRole->id)
+        ->where('model_type', User::class)
+        ->pluck('model_id');
+    User::query()
+        ->whereIn('id', $adminIds)
+        ->where('id', '!=', $rootAdmin->id)
+        ->update(['account_status' => AccountStatus::Suspended->value]);
 
     try {
         $staffService->suspend($rootAdmin, $coAdmin->fresh());

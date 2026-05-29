@@ -4,22 +4,22 @@ declare(strict_types=1);
 
 namespace App\Services\Staff;
 
+use App\Enums\StaffErrorCode;
+use App\Exceptions\Staff\StaffDomainException;
 use App\Models\OfficeStaffAssignment;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
-/**
- * Slice B phase 1 uses RuntimeException with stable error-code messages.
- * After Slice A merges, these become StaffDomainException + StaffErrorCode.
- */
 final class OfficeAssignmentService
 {
     public function attach(User $staff, int $officeId, bool $isManager): OfficeStaffAssignment
     {
         if (! $staff->hasRole('office_staff')) {
-            throw new RuntimeException('ROLE_MISMATCH_FOR_OFFICE_ASSIGN');
+            throw new StaffDomainException(
+                StaffErrorCode::RoleMismatchForOfficeAssign,
+                'User is not office staff.',
+            );
         }
 
         return DB::transaction(function () use ($staff, $officeId, $isManager): OfficeStaffAssignment {
@@ -54,7 +54,10 @@ final class OfficeAssignmentService
                 ->get();
 
             if ($activeAssignments->count() <= 1) {
-                throw new RuntimeException('OFFICE_ASSIGNMENT_LAST_REQUIRED');
+                throw new StaffDomainException(
+                    StaffErrorCode::OfficeAssignmentLastRequired,
+                    'Cannot remove the last active office assignment.',
+                );
             }
 
             $assignment->forceFill(['removed_at' => now()])->save();
@@ -94,7 +97,10 @@ final class OfficeAssignmentService
             ->first();
 
         if ($existing !== null) {
-            throw new RuntimeException('OFFICE_ASSIGNMENT_DUPLICATE');
+            throw new StaffDomainException(
+                StaffErrorCode::OfficeAssignmentDuplicate,
+                'Office assignment is already active.',
+            );
         }
     }
 
@@ -106,7 +112,10 @@ final class OfficeAssignmentService
         $officeIds = array_map(static fn (array $assignment): int => (int) $assignment['office_id'], $assignments);
 
         if (count($officeIds) !== count(array_unique($officeIds))) {
-            throw new RuntimeException('OFFICE_ASSIGNMENT_DUPLICATE');
+            throw new StaffDomainException(
+                StaffErrorCode::OfficeAssignmentDuplicate,
+                'Office assignment is already active.',
+            );
         }
     }
 }

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as Adm
 use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as AdminSettlementListSettlementsController;
 use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as AdminSettlementReverseSettlementController;
 use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
+use App\Http\Controllers\Api\Admin\Staff\OfficeAssignmentController;
 use App\Http\Controllers\Api\Admin\Staff\StaffController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
@@ -261,6 +262,8 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::post('/{staff}/reinstate', [StaffController::class, 'reinstate'])->name('reinstate');
         Route::post('/{staff}/deactivate', [StaffController::class, 'deactivate'])->name('deactivate');
         Route::post('/{staff}/reset-temp-password', [StaffController::class, 'resetTempPassword'])->name('reset-temp-password');
+        Route::post('/{staff}/office-assignments', [OfficeAssignmentController::class, 'store'])->name('office-assignments.store');
+        Route::delete('/{staff}/office-assignments/{assignment}', [OfficeAssignmentController::class, 'destroy'])->name('office-assignments.destroy');
     });
 
 // ─── /me/password/change-from-temp — bypasses the password-change-required middleware ──

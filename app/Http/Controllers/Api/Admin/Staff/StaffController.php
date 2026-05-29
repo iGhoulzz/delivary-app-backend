@@ -26,7 +26,7 @@ final class StaffController extends Controller
 
         $query = User::query()
             ->whereHas('roles', fn ($q) => $q->whereIn('name', ['admin', 'office_staff']))
-            ->with(['roles', 'activeOfficeAssignments']);
+            ->with(['roles', 'activeOfficeAssignments.office']);
 
         if ($role = request('role')) {
             $query->whereHas('roles', fn ($q) => $q->where('name', $role));
@@ -47,7 +47,7 @@ final class StaffController extends Controller
     {
         $this->authorize('view', $staff);
 
-        return new StaffResource($staff->load(['roles', 'activeOfficeAssignments']));
+        return new StaffResource($staff->load(['roles', 'activeOfficeAssignments.office']));
     }
 
     public function store(CreateStaffRequest $request): JsonResponse
@@ -57,7 +57,7 @@ final class StaffController extends Controller
         $result = $this->staff->create($request->toInput(), $request->user());
 
         return response()->json([
-            'staff' => (new StaffResource($result['user']->load('roles', 'activeOfficeAssignments')))->resolve(),
+            'staff' => (new StaffResource($result['user']->load('roles', 'activeOfficeAssignments.office')))->resolve(),
             'temporary_password' => $result['temporary_password'],
         ], 201);
     }
@@ -68,7 +68,7 @@ final class StaffController extends Controller
 
         $updated = $this->staff->update($staff, $request->toInput());
 
-        return new StaffResource($updated->load('roles', 'activeOfficeAssignments'));
+        return new StaffResource($updated->load('roles', 'activeOfficeAssignments.office'));
     }
 
     public function suspend(User $staff): StaffResource
@@ -76,7 +76,7 @@ final class StaffController extends Controller
         $this->authorize('suspend', $staff);
 
         return new StaffResource(
-            $this->staff->suspend($staff, request()->user())->load('roles', 'activeOfficeAssignments'),
+            $this->staff->suspend($staff, request()->user())->load('roles', 'activeOfficeAssignments.office'),
         );
     }
 
@@ -85,7 +85,7 @@ final class StaffController extends Controller
         $this->authorize('reinstate', $staff);
 
         return new StaffResource(
-            $this->staff->reinstate($staff, request()->user())->load('roles', 'activeOfficeAssignments'),
+            $this->staff->reinstate($staff, request()->user())->load('roles', 'activeOfficeAssignments.office'),
         );
     }
 
@@ -94,7 +94,7 @@ final class StaffController extends Controller
         $this->authorize('deactivate', $staff);
 
         return new StaffResource(
-            $this->staff->deactivate($staff, request()->user())->load('roles', 'activeOfficeAssignments'),
+            $this->staff->deactivate($staff, request()->user())->load('roles', 'activeOfficeAssignments.office'),
         );
     }
 
@@ -105,7 +105,7 @@ final class StaffController extends Controller
         $result = $this->staff->resetTempPassword($staff, request()->user());
 
         return response()->json([
-            'staff' => (new StaffResource($result['user']->load('roles', 'activeOfficeAssignments')))->resolve(),
+            'staff' => (new StaffResource($result['user']->load('roles', 'activeOfficeAssignments.office')))->resolve(),
             'temporary_password' => $result['temporary_password'],
         ]);
     }

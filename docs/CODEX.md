@@ -910,3 +910,44 @@ Next step after Claude Slice A merges:
 - Wire deactivate assignment soft-removal.
 - Add the two routes and replace skipped route tests with active assertions.
 - Re-run full Pest, staff e2e, and orders e2e.
+
+---
+
+## 2026-05-29 Slice 15 - Staff CRUD Slice B Phase 2 Integration
+
+Claude's Slice A was merged to `main`, then Codex rebased `codex/staff-crud-office-assignments` onto `origin/main` cleanly.
+
+Phase 2 implementation:
+
+- Added Slice B cases to `StaffErrorCode`:
+  - `ROLE_MISMATCH_FOR_OFFICE_ASSIGN`
+  - `OFFICE_ASSIGNMENT_DUPLICATE`
+  - `OFFICE_ASSIGNMENT_LAST_REQUIRED`
+- Replaced `OfficeAssignmentService` Phase 1 `RuntimeException` stubs with `StaffDomainException`.
+- Removed controller-level stub error rendering from `OfficeAssignmentController`; global `StaffDomainException` rendering now owns the response shape.
+- Widened `CreateStaffRequest` to allow `role=office_staff` with required `office_assignments[]`, while keeping admin creation from sending assignments.
+- Wired `OfficeAssignmentService::attachMany()` into `StaffService::create()` for office staff creation.
+- Wired `StaffService::deactivate()` to soft-remove all active office assignments.
+- Replaced `StaffResource` inline assignment mapping with `OfficeAssignmentResource::collection(...)`.
+- Updated `StaffController` eager loading to `activeOfficeAssignments.office`.
+- Added the two office-assignment routes inside Claude's `admin.staff.*` group.
+- Activated the previously skipped office-assignment feature tests.
+- Added a StaffService create test for office staff + assignment creation.
+- Updated `scripts/staff-e2e.php` to assert deactivate removes assignments and to make the last-admin scenario independent from existing local DB admin rows.
+
+Verification:
+
+- `php artisan route:list --path=admin/staff`: 10 routes present, including `admin.staff.office-assignments.store` and `admin.staff.office-assignments.destroy`.
+- `php artisan test tests\Unit\Services\Staff\OfficeAssignmentServiceTest.php tests\Unit\Services\Staff\StaffServiceCreateTest.php tests\Feature\Staff\OfficeAssignmentControllerTest.php`: passed, 17 tests / 49 assertions.
+- `php artisan test tests\Feature\Staff tests\Unit\Services\Staff tests\Unit\Middleware\EnsurePasswordChangedMiddlewareTest.php tests\Unit\Policies\StaffPolicyTest.php tests\Feature\Auth\LoginSuspendedRejectionTest.php`: passed, 47 tests / 147 assertions.
+- `php artisan migrate`: applied `2026_05_20_000010_add_public_id_to_office_staff_assignments`.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"`: all 6 staff smoke scenarios passed.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`: all 32 order smoke scenarios passed.
+- `vendor/bin/pint.bat ...`: fixed formatting in `OfficeAssignmentService`.
+- Final `php artisan test`: passed, 91 tests / 311 assertions.
+
+Review note for Claude:
+
+- Confirm the `StaffResource` assignment shape is acceptable now that it delegates to `OfficeAssignmentResource` and exposes assignment/office public ids.
+- Confirm `StaffService::deactivate()` should remain a direct bulk update for active assignments rather than calling `OfficeAssignmentService::detach()` repeatedly. This intentionally bypasses the last-assignment guard because deactivate is the supported way to remove all assignments.
