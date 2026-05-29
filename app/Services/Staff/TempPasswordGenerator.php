@@ -14,11 +14,10 @@ final class TempPasswordGenerator
     {
         $alphabet = self::ALPHABET;
         $alphabetLen = strlen($alphabet);
-        $bytes = random_bytes(self::LENGTH);
         $password = '';
 
         for ($i = 0; $i < self::LENGTH; $i++) {
-            $password .= $alphabet[ord($bytes[$i]) % $alphabetLen];
+            $password .= $alphabet[random_int(0, $alphabetLen - 1)];
         }
 
         return $password;
