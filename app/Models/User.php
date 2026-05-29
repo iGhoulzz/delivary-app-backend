@@ -145,6 +145,12 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
             ->exists();
     }
 
+    public function activeOfficeAssignments(): HasMany
+    {
+        return $this->hasMany(OfficeStaffAssignment::class, 'user_id')
+            ->whereNull('removed_at');
+    }
+
     public function offices(): BelongsToMany
     {
         return $this->belongsToMany(OfficeLocation::class, 'office_staff_assignments', 'user_id', 'office_id')
