@@ -8,6 +8,7 @@ enum AuthErrorCode: string
 {
     case InvalidCredentials = 'invalid_credentials';
     case PhoneNotVerified = 'phone_not_verified';
+    case AccountNotLoginable = 'account_not_loginable';
     case TooManyAttempts = 'too_many_attempts';
     case OtpInvalid = 'otp_invalid';
     case OtpExpired = 'otp_expired';
@@ -21,7 +22,8 @@ enum AuthErrorCode: string
     {
         return match ($this) {
             self::InvalidCredentials => 401,
-            self::PhoneNotVerified, self::EmailNotVerified,
+            self::PhoneNotVerified, self::AccountNotLoginable,
+            self::EmailNotVerified,
             self::AlreadyVerified, self::VerificationLinkInvalid => 403,
             self::TooManyAttempts => 429,
             self::OtpInvalid, self::OtpExpired,

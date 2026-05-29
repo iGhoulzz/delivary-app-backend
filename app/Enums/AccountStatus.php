@@ -25,7 +25,7 @@ enum AccountStatus: string
 
     public function canLogin(): bool
     {
-        return $this !== self::Banned;
+        return $this === self::Active || $this === self::PendingVerification;
     }
 
     public function canCreateOrders(): bool

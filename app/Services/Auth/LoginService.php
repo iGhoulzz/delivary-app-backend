@@ -36,6 +36,10 @@ final class LoginService
             return ['error' => AuthErrorCode::PhoneNotVerified];
         }
 
+        if (! $user->account_status->canLogin()) {
+            return ['error' => AuthErrorCode::AccountNotLoginable];
+        }
+
         $token = $user->createToken('auth')->plainTextToken;
 
         return ['user' => $user, 'token' => $token];
