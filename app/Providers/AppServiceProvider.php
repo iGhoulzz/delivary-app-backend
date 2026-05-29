@@ -194,6 +194,14 @@ final class AppServiceProvider extends ServiceProvider
                 ->by('forgot_password:'.$identifier)
                 ->response($this->throttleResponseCallback());
         });
+
+        RateLimiter::for('password_change_temp', function (Request $request): Limit {
+            $userId = (string) ($request->user()?->id ?? '');
+
+            return Limit::perMinutes(15, 5)
+                ->by('password_change_temp:'.$userId)
+                ->response($this->throttleResponseCallback());
+        });
     }
 
     private function secondsToMinutes(mixed $seconds): int
