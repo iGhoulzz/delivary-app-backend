@@ -30,6 +30,7 @@ final class LoginController extends Controller
             return $this->errorResponse($err, match ($err) {
                 AuthErrorCode::InvalidCredentials => 'Phone number or password is incorrect.',
                 AuthErrorCode::PhoneNotVerified => 'Verify your phone number before logging in.',
+                AuthErrorCode::AccountNotLoginable => 'Your account is not permitted to log in.',
                 default => 'Authentication failed.',
             });
         }

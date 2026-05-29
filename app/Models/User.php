@@ -47,6 +47,7 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
         'sms_notifications_enabled', 'email_notifications_enabled',
         'fcm_token', 'fcm_token_updated_at',
         'phone_verified_at', 'email_verified_at',
+        'must_change_password',
     ];
 
     /** @var array<int, string> */
@@ -77,6 +78,7 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
             'push_notifications_enabled' => 'boolean',
             'sms_notifications_enabled' => 'boolean',
             'email_notifications_enabled' => 'boolean',
+            'must_change_password' => 'boolean',
             'password' => 'hashed',
             'account_status' => AccountStatus::class,
         ];
@@ -141,6 +143,12 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
             ->active()
             ->where('office_id', $officeId)
             ->exists();
+    }
+
+    public function activeOfficeAssignments(): HasMany
+    {
+        return $this->hasMany(OfficeStaffAssignment::class, 'user_id')
+            ->whereNull('removed_at');
     }
 
     public function offices(): BelongsToMany

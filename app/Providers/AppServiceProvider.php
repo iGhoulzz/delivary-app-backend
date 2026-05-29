@@ -8,11 +8,14 @@ use App\Events\OrderStatusChanged;
 use App\Listeners\BroadcastDatabaseNotification;
 use App\Listeners\BroadcastWithdrawnOnExit;
 use App\Models\PlatformSetting;
+use App\Models\User as UserModel;
+use App\Policies\StaffPolicy;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Notifications\Events\NotificationSent;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -27,6 +30,8 @@ final class AppServiceProvider extends ServiceProvider
     {
         Event::listen(OrderStatusChanged::class, BroadcastWithdrawnOnExit::class);
         Event::listen(NotificationSent::class, BroadcastDatabaseNotification::class);
+
+        Gate::policy(UserModel::class, StaffPolicy::class);
 
         $this->configureRateLimiters();
     }
@@ -187,6 +192,14 @@ final class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinutes(15, 3)
                 ->by('forgot_password:'.$identifier)
+                ->response($this->throttleResponseCallback());
+        });
+
+        RateLimiter::for('password_change_temp', function (Request $request): Limit {
+            $userId = (string) ($request->user()?->id ?? '');
+
+            return Limit::perMinutes(15, 5)
+                ->by('password_change_temp:'.$userId)
                 ->response($this->throttleResponseCallback());
         });
     }
