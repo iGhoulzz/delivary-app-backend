@@ -856,3 +856,57 @@ Verification:
 - `vendor/bin/pint ...`: passed/fixed touched files.
 - `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` initially failed because `BROADCAST_CONNECTION=reverb` tried to connect to local Reverb on port 8080 and Reverb was not running.
 - `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` passed all 32 rollback-wrapped scenarios.
+
+---
+
+## 2026-05-29 Slice 14 - Staff CRUD Slice B Phase 1 Office Assignments
+
+Worked in `C:\Users\User\Desktop\delivary-app-codex` on branch `codex/staff-crud-office-assignments`.
+
+Scope implemented from `docs/superpowers/plans/2026-05-20-staff-crud-slice-b-codex.md`, Phase 1 only. Phase 2 is intentionally blocked until Claude's Slice A staff CRUD work merges to main.
+
+Files added or updated:
+
+- `database/migrations/2026_05_20_000010_add_public_id_to_office_staff_assignments.php`
+- `app/Models/OfficeStaffAssignment.php`
+- `app/Services/Staff/OfficeAssignmentService.php`
+- `app/Http/Requests/Staff/AttachOfficeAssignmentRequest.php`
+- `app/Http/Resources/Staff/OfficeAssignmentResource.php`
+- `app/Http/Controllers/Api/Admin/Staff/OfficeAssignmentController.php`
+- `tests/Unit/Services/Staff/OfficeAssignmentServiceTest.php`
+- `tests/Feature/Staff/OfficeAssignmentControllerTest.php`
+- `scripts/staff-e2e.php`
+
+Implementation details:
+
+- Added `office_staff_assignments.public_id` migration with ULID backfill, unique public id, removal of the old `user_id + office_id` unique constraint, and a partial unique index on active assignments only.
+- Updated `OfficeStaffAssignment` with `public_id` fillable support, ULID generation, and route binding by `public_id`.
+- Added `OfficeAssignmentService` with Phase 1 `RuntimeException` stubs for:
+  - `ROLE_MISMATCH_FOR_OFFICE_ASSIGN`
+  - `OFFICE_ASSIGNMENT_DUPLICATE`
+  - `OFFICE_ASSIGNMENT_LAST_REQUIRED`
+- Added attach, detach, and attachMany behavior. Detach soft-removes rows and refuses removal of the last active assignment.
+- Added duplicate-office validation for `attachMany()` before writing rows.
+- Added FormRequest, Resource, and controller scaffolding, but did not wire routes because routes belong to Phase 2 after Slice A merges.
+- Added controller feature tests and marked them skipped until Slice A route integration.
+- Added `scripts/staff-e2e.php` scaffold for Phase 2 verification.
+
+Test/verification notes:
+
+- `php -l` passed for all new and modified Slice B files.
+- `vendor/bin/pint.bat ...` passed after formatting.
+- `php artisan test tests\Unit\Services\Staff\OfficeAssignmentServiceTest.php` passed: 9 tests / 22 assertions.
+- `php artisan test tests\Feature\Staff\OfficeAssignmentControllerTest.php` passed with 6 skipped tests, expected until Phase 2 route wiring.
+- `php artisan test` passed: 59 tests, 53 passed, 6 skipped, 186 assertions.
+- `php artisan migrate:status --pending` shows `2026_05_20_000010_add_public_id_to_office_staff_assignments` pending in the local app database. The migration was exercised by the test database through `RefreshDatabase`.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"` currently fails with `Target class [App\Services\Staff\StaffService] does not exist`, expected in Phase 1 because Slice A has not merged.
+
+Next step after Claude Slice A merges:
+
+- Rebase this branch on main.
+- Add the three Slice B cases to `StaffErrorCode`.
+- Swap `RuntimeException` stubs to `StaffDomainException`.
+- Wire `OfficeAssignmentService::attachMany()` into `StaffService::create()`.
+- Wire deactivate assignment soft-removal.
+- Add the two routes and replace skipped route tests with active assertions.
+- Re-run full Pest, staff e2e, and orders e2e.
