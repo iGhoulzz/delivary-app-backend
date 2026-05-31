@@ -293,8 +293,8 @@ Driver::join('driver_profiles', ...)
 
 ## Current Project State
 
-**Last updated:** 2026-05-17
-**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17).** Cash loop closed end-to-end. Real-time + admin staff CRUD are next.
+**Last updated:** 2026-05-31
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B).** Cash loop closed end-to-end; admin staff account management live. Real-time is next.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -451,13 +451,36 @@ Driver::join('driver_profiles', ...)
 
 **Smoke test:** `scripts/orders-e2e.php` now covers 31 rollback-wrapped scenarios (17 existing + 14 new for settlement: happy match, empty/excess/shortage/zero-net settlements, sale-order earning flips, clearance cron 48h cutoff, payout happy path + partial + mismatch + below-minimum, reversal happy path + blocked-once-past-clearance).
 
+### Staff CRUD milestone (2026-05-20) ✅ — Slices A + B
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/admin/staff` | GET | sanctum + role:admin + StaffPolicy::viewAny |
+| `/api/admin/staff` | POST | sanctum + role:admin + StaffPolicy::create |
+| `/api/admin/staff/{staff}` | GET | sanctum + role:admin + StaffPolicy::view |
+| `/api/admin/staff/{staff}` | PATCH | sanctum + role:admin + StaffPolicy::update |
+| `/api/admin/staff/{staff}/suspend` | POST | sanctum + role:admin + StaffPolicy::suspend |
+| `/api/admin/staff/{staff}/reinstate` | POST | sanctum + role:admin + StaffPolicy::reinstate |
+| `/api/admin/staff/{staff}/deactivate` | POST | sanctum + role:admin + StaffPolicy::deactivate |
+| `/api/admin/staff/{staff}/reset-temp-password` | POST | sanctum + role:admin + StaffPolicy::resetTempPassword |
+| `/api/admin/staff/{staff}/office-assignments` | POST | sanctum + role:admin + StaffPolicy::manageOfficeAssignments |
+| `/api/admin/staff/{staff}/office-assignments/{assignment}` | DELETE | sanctum + role:admin + StaffPolicy::manageOfficeAssignments |
+| `/api/me/password/change-from-temp` | POST | sanctum (throttle:password_change_temp) — exempt from password-change gate |
+
+**Locked decisions:** admin-mediated creation only (no self-registration); system generates a temp password returned **once**, employee forced to change on first use via `EnsurePasswordChanged` middleware (blocks all authed routes except change-from-temp + logout while `must_change_password=true`); soft lifecycle only (never hard-delete — FK preservation). **suspend** = revoke tokens, keep office assignments (reversible); **deactivate** = suspend + soft-remove all office assignments. Last-active-admin and self-modify guards on suspend/deactivate/reset. `office_staff_assignments` got a `public_id` + a partial-unique index `(user_id, office_id) WHERE removed_at IS NULL` (allows re-assigning a removed office). Login blocked for suspended/banned **after** password check (anti-enumeration), enforced in `LoginService`.
+
+**Architecture:** `StaffService` (create + lifecycle, sole writer), `OfficeAssignmentService` (attach/detach/attachMany with `lockForUpdate` + last-assignment guard; `attachMany` runs inside the create transaction), `TempPasswordChangeService` (verify-current → set-new → revoke-all-tokens → issue-new), `TempPasswordGenerator` (`random_int` CSPRNG). All staff exceptions carry `StaffErrorCode` → HTTP via `httpStatus()`, rendered by `bootstrap/app.php`. `StaffResource` embeds `OfficeAssignmentResource` via null-safe `whenLoaded`.
+
+**Process:** first parallel-worktree milestone (Claude = Slice A, Codex = Slice B). Slice A merged first (PR #3); Codex rebased + integrated Slice B (PR #4). Claude's Slice B review caught a blocking suspend/deactivate assignment-lifecycle inversion (fixed pre-merge) and ran a post-merge `security-review` (no HIGH/MEDIUM findings).
+
+**Smoke test:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios). Merged-main verification: Pest 92/92, staff-e2e + orders-e2e (32/32) green.
+
 ### Next Steps (in order)
 1. **Real-time** — Reverb channels for driver location + order status (layers onto existing `OrderStatusChanged` event zero-touch).
-2. **Staff CRUD** — admin creates/manages internal accounts (deferred from driver onboarding milestone).
-3. **Account moderation** — global ban/suspend with reason history.
-4. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
-5. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
-6. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
+2. **Account moderation** — global ban/suspend with reason history (builds on the staff suspend/reinstate + `AccountStatus` foundation; adds a staff-action audit table deferred from this milestone).
+3. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
+4. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
+5. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
 
 ### Open Questions
 - Storage fee policy specifics (flat daily after grace period? Tiered?)

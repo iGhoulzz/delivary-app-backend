@@ -1186,6 +1186,22 @@ Office staff reconciles a driver's three buckets in one atomic transaction (all-
 
 **E2E smoke verified:** expanded `scripts/orders-e2e.php` to 31 rollback-wrapped scenarios — 14 new for settlement: happy match, empty/excess/shortage/zero-net settlements, sale-order earning state flips, clearance cron 48h cutoff (eligible + ineligible), payout happy path + partial + total mismatch + below minimum, reversal happy path + blocked-once-past-clearance.
 
+### 17.12 Staff CRUD milestone (2026-05-20) ✅
+
+Admin-mediated internal-account management. Built per `docs/superpowers/specs/2026-05-20-staff-crud-design.md`. **First milestone on the parallel-worktree workflow:** Claude built Slice A (core CRUD + auth middleware + policy) in `delivary-app-claude/`, Codex built Slice B (office assignments + e2e smoke) in `delivary-app-codex/`; Slice A merged first (PR #3), then Codex rebased and integrated Slice B (PR #4). Claude reviewed Slice B and caught one blocking assignment-lifecycle inversion (soft-removal mis-placed in `suspend()` instead of `deactivate()`), which Codex fixed before merge.
+
+Admin creates an internal account (`admin` or `office_staff`); the system generates a random temporary password returned **once** in the response; the admin delivers it out-of-band; the employee is forced to change it on first use. The `EnsurePasswordChanged` middleware blocks any staff with `must_change_password=true` from every authenticated endpoint except the change-from-temp escape hatch and logout. Mirrors the face-to-face, no-self-registration trust model from driver onboarding. Lifecycle is soft only — never hard-delete (preserves FKs to `settlements.processed_by_staff_id`, `order_status_logs.actor_id`, etc.): **suspend** (revoke tokens, keep office assignments — reversible via reinstate), **reinstate**, **deactivate** (suspend + soft-remove all office assignments).
+
+**Endpoints shipped (10 routes):** 8 under `/api/admin/staff` (index/show/store/update + suspend/reinstate/deactivate/reset-temp-password), 2 office-assignment routes nested in that group (`POST` + `DELETE .../office-assignments`), plus `POST /api/me/password/change-from-temp` (the only route, alongside logout, exempt from the password-change gate).
+
+**Schema deltas:** `users.must_change_password` (boolean, default false); `office_staff_assignments` gained a `public_id` ULID (unique, route-key) and swapped its `unique(user_id, office_id)` constraint for a **partial unique index `WHERE removed_at IS NULL`** — so a previously-removed office can be re-assigned while duplicate *active* assignments stay blocked.
+
+**Locked decisions:** Slice A rejected `role=office_staff` at the FormRequest layer (clean 422) during the merge window, widened to allow it in Slice B; the API never exposes a half-built endpoint. `StaffErrorCode` enum owned by Slice A, three Slice B cases (`ROLE_MISMATCH_FOR_OFFICE_ASSIGN` 422, `OFFICE_ASSIGNMENT_DUPLICATE` 409, `OFFICE_ASSIGNMENT_LAST_REQUIRED` 422) appended post-merge. `OfficeAssignmentService::attachMany()` runs inside `StaffService::create()`'s transaction (no nested transaction, skips role re-check); `detach()` uses `lockForUpdate` + a last-assignment guard (admin must `deactivate` to remove the final one). Temp passwords use `random_int()` over a 55-char ambiguity-free alphabet × 10 chars. No staff-action audit table this milestone (deferred to Account Moderation). Login gate (`AccountStatus::canLogin()`) blocks suspended/banned **after** password verification (anti-enumeration) and is enforced in `LoginService`.
+
+**Security review (Claude, post-merge, per §10.8):** no HIGH/MEDIUM findings — double-gated authZ (route `role:admin` + `StaffPolicy`), token revocation on every state change, forced-password-change re-checked per request, IDOR-safe assignment detach (`abort_unless user_id === staff->id`), Eloquent-bound queries, explicit-array mass-assignment, `public_id`-only exposure.
+
+**E2E smoke verified:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios: forced-change, office_staff with 2 offices, reset-temp, suspend-preserves-assignments, reinstate-then-deactivate-removes, self-modify + last-admin guards). Full suite green on merged main: Pest 92/92, staff-e2e + orders-e2e (32/32) passing.
+
 **End of Specification Document**
 
 *This document represents all locked architectural decisions. Future questions and decisions should be appended to this document with date stamps.*
