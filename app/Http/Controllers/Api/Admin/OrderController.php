@@ -33,7 +33,7 @@ final class OrderController extends Controller
     public function index(AdminListOrdersRequest $request): AnonymousResourceCollection
     {
         $validated = $request->validated();
-        $query = Order::query()->with(['driver.driverProfile']);
+        $query = Order::query()->with(['sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice']);
 
         if (isset($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -51,7 +51,7 @@ final class OrderController extends Controller
 
     public function show(Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($order->load(['driver.driverProfile', 'statusLogs']));
+        return new AdminOrderResource($order->load(['sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice', 'statusLogs']));
     }
 
     public function assign(AdminAssignOrderRequest $request, Order $order): AdminOrderResource

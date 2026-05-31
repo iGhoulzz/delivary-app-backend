@@ -41,14 +41,16 @@ final class OfficeOrderResource extends JsonResource
                 'price' => (string) $order->item_price,
             ],
             'sender' => [
-                'user_id' => $order->sender_user_id,
-                'name' => $order->sender_name,
+                'id' => $order->relationLoaded('sender') ? $order->sender?->public_id : null,
+                'name' => $order->relationLoaded('sender') ? $order->sender?->fullName() : null,
                 'phone' => $order->sender_phone,
             ],
             'pickup_address' => $order->pickup_address,
             'receiver_address' => $order->receiver_address,
             'return' => [
-                'office_id' => $order->return_office_id,
+                'office' => $order->relationLoaded('returnOffice') && $order->returnOffice !== null
+                    ? ['id' => $order->returnOffice->public_id, 'name' => $order->returnOffice->name]
+                    : null,
                 'reason' => $order->return_reason?->value,
                 'fault' => $order->return_fault?->value,
                 'delivery_failed_at' => $order->delivery_failed_at?->toIso8601String(),
@@ -63,7 +65,10 @@ final class OfficeOrderResource extends JsonResource
                 'total' => $totalOwed,
             ],
             'inventory' => $inventory !== null ? (new OfficeInventoryResource($inventory))->toArray($request) : null,
-            'driver_id' => $order->driver_id,
+            'driver' => $order->driver_id !== null ? [
+                'id' => $order->relationLoaded('driver') ? $order->driver?->public_id : null,
+                'name' => $order->relationLoaded('driver') ? $order->driver?->fullName() : null,
+            ] : null,
         ];
     }
 

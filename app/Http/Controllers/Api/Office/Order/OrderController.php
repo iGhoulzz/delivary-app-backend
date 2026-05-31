@@ -33,7 +33,7 @@ final class OrderController extends Controller
         }
 
         return OfficeOrderResource::collection(
-            $query->with(['officeInventory', 'driver.driverProfile'])
+            $query->with(['officeInventory', 'sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice'])
                 ->orderByDesc('status_changed_at')
                 ->paginate((int) $request->input('per_page', 30))
         );
@@ -43,6 +43,6 @@ final class OrderController extends Controller
     {
         $this->authorize('viewByOffice', $order);
 
-        return new OfficeOrderResource($order->load(['officeInventory', 'driver.driverProfile', 'statusLogs']));
+        return new OfficeOrderResource($order->load(['officeInventory', 'sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice', 'statusLogs']));
     }
 }

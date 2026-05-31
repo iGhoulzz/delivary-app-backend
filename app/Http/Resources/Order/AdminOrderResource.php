@@ -24,8 +24,8 @@ final class AdminOrderResource extends JsonResource
             'tracking_token' => $o->tracking_token,
 
             'sender' => [
-                'user_id' => $o->sender_user_id,
-                'name' => $o->sender_name,
+                'id' => $o->relationLoaded('sender') ? $o->sender?->public_id : null,
+                'name' => $o->relationLoaded('sender') ? $o->sender?->fullName() : null,
                 'phone' => $o->sender_phone,
             ],
             'pickup' => [
@@ -39,8 +39,12 @@ final class AdminOrderResource extends JsonResource
             ],
             'receiver' => [
                 'type' => $o->receiver_type->value,
-                'user_id' => $o->receiver_user_id,
-                'guest_id' => $o->receiver_guest_id,
+                'user' => $o->relationLoaded('receiverUser') && $o->receiverUser !== null
+                    ? ['id' => $o->receiverUser->public_id, 'name' => $o->receiverUser->fullName()]
+                    : null,
+                'guest' => $o->relationLoaded('receiverGuest') && $o->receiverGuest !== null
+                    ? ['id' => $o->receiverGuest->public_id]
+                    : null,
                 'name' => $o->receiver_name,
                 'phone' => $o->receiver_phone,
                 'address' => $o->receiver_address,
@@ -71,7 +75,8 @@ final class AdminOrderResource extends JsonResource
                 'delivery_fee_paid_at' => $o->delivery_fee_paid_at?->toIso8601String(),
             ],
             'driver' => $o->driver_id ? [
-                'user_id' => $o->driver_id,
+                'id' => $o->relationLoaded('driver') ? $o->driver?->public_id : null,
+                'name' => $o->relationLoaded('driver') ? $o->driver?->fullName() : null,
                 'first_name' => $o->driver?->first_name,
                 'phone' => $o->driver?->phone_number,
                 'assignment_attempts' => $o->driver_assignment_attempts,
