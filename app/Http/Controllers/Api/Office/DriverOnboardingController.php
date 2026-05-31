@@ -98,9 +98,12 @@ final class DriverOnboardingController extends Controller
 
     public function verifyPhone(
         VerifyDriverPhoneRequest $request,
-        DriverProfile $driverProfile,
+        User $driverUser,
         OtpService $otp,
     ): Response|JsonResponse {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         /** @var User $staff */
         $staff = $request->user();
 
@@ -135,8 +138,11 @@ final class DriverOnboardingController extends Controller
         return response()->noContent();
     }
 
-    public function submit(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function submit(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         /** @var User $staff */
         $staff = $request->user();
         if (! $staff->can('manageInOffice', $driverProfile)) {
