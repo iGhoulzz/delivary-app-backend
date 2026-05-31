@@ -7,6 +7,7 @@ namespace App\Services\Staff;
 use App\Enums\AccountStatus;
 use App\Enums\StaffErrorCode;
 use App\Exceptions\Staff\StaffDomainException;
+use App\Models\OfficeStaffAssignment;
 use App\Models\User;
 use App\Support\DTO\CreateStaffInput;
 use App\Support\DTO\UpdateStaffInput;
@@ -17,6 +18,7 @@ final class StaffService
 {
     public function __construct(
         private readonly TempPasswordGenerator $passwords,
+        private readonly OfficeAssignmentService $officeAssignments,
     ) {}
 
     /**
@@ -40,10 +42,8 @@ final class StaffService
 
             $user->assignRole($input->role);
 
-            if ($input->role === 'office_staff' && $input->officeAssignments !== []) {
-                throw new \RuntimeException(
-                    'office_staff creation requires Slice B (OfficeAssignmentService::attachMany)'
-                );
+            if ($input->role === 'office_staff') {
+                $this->officeAssignments->attachMany($user, $input->officeAssignments);
             }
 
             return [
@@ -92,6 +92,10 @@ final class StaffService
         return DB::transaction(function () use ($staff): User {
             $staff->forceFill(['account_status' => AccountStatus::Suspended->value])->save();
             $staff->tokens()->delete();
+            OfficeStaffAssignment::query()
+                ->where('user_id', $staff->id)
+                ->whereNull('removed_at')
+                ->update(['removed_at' => now()]);
 
             return $staff->fresh();
         });

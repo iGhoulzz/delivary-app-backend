@@ -856,3 +856,130 @@ Verification:
 - `vendor/bin/pint ...`: passed/fixed touched files.
 - `php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` initially failed because `BROADCAST_CONNECTION=reverb` tried to connect to local Reverb on port 8080 and Reverb was not running.
 - `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"` passed all 32 rollback-wrapped scenarios.
+
+---
+
+## 2026-05-29 Slice 14 - Staff CRUD Slice B Phase 1 Office Assignments
+
+Worked in `C:\Users\User\Desktop\delivary-app-codex` on branch `codex/staff-crud-office-assignments`.
+
+Scope implemented from `docs/superpowers/plans/2026-05-20-staff-crud-slice-b-codex.md`, Phase 1 only. Phase 2 is intentionally blocked until Claude's Slice A staff CRUD work merges to main.
+
+Files added or updated:
+
+- `database/migrations/2026_05_20_000010_add_public_id_to_office_staff_assignments.php`
+- `app/Models/OfficeStaffAssignment.php`
+- `app/Services/Staff/OfficeAssignmentService.php`
+- `app/Http/Requests/Staff/AttachOfficeAssignmentRequest.php`
+- `app/Http/Resources/Staff/OfficeAssignmentResource.php`
+- `app/Http/Controllers/Api/Admin/Staff/OfficeAssignmentController.php`
+- `tests/Unit/Services/Staff/OfficeAssignmentServiceTest.php`
+- `tests/Feature/Staff/OfficeAssignmentControllerTest.php`
+- `scripts/staff-e2e.php`
+
+Implementation details:
+
+- Added `office_staff_assignments.public_id` migration with ULID backfill, unique public id, removal of the old `user_id + office_id` unique constraint, and a partial unique index on active assignments only.
+- Updated `OfficeStaffAssignment` with `public_id` fillable support, ULID generation, and route binding by `public_id`.
+- Added `OfficeAssignmentService` with Phase 1 `RuntimeException` stubs for:
+  - `ROLE_MISMATCH_FOR_OFFICE_ASSIGN`
+  - `OFFICE_ASSIGNMENT_DUPLICATE`
+  - `OFFICE_ASSIGNMENT_LAST_REQUIRED`
+- Added attach, detach, and attachMany behavior. Detach soft-removes rows and refuses removal of the last active assignment.
+- Added duplicate-office validation for `attachMany()` before writing rows.
+- Added FormRequest, Resource, and controller scaffolding, but did not wire routes because routes belong to Phase 2 after Slice A merges.
+- Added controller feature tests and marked them skipped until Slice A route integration.
+- Added `scripts/staff-e2e.php` scaffold for Phase 2 verification.
+
+Test/verification notes:
+
+- `php -l` passed for all new and modified Slice B files.
+- `vendor/bin/pint.bat ...` passed after formatting.
+- `php artisan test tests\Unit\Services\Staff\OfficeAssignmentServiceTest.php` passed: 9 tests / 22 assertions.
+- `php artisan test tests\Feature\Staff\OfficeAssignmentControllerTest.php` passed with 6 skipped tests, expected until Phase 2 route wiring.
+- `php artisan test` passed: 59 tests, 53 passed, 6 skipped, 186 assertions.
+- `php artisan migrate:status --pending` shows `2026_05_20_000010_add_public_id_to_office_staff_assignments` pending in the local app database. The migration was exercised by the test database through `RefreshDatabase`.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"` currently fails with `Target class [App\Services\Staff\StaffService] does not exist`, expected in Phase 1 because Slice A has not merged.
+
+Next step after Claude Slice A merges:
+
+- Rebase this branch on main.
+- Add the three Slice B cases to `StaffErrorCode`.
+- Swap `RuntimeException` stubs to `StaffDomainException`.
+- Wire `OfficeAssignmentService::attachMany()` into `StaffService::create()`.
+- Wire deactivate assignment soft-removal.
+- Add the two routes and replace skipped route tests with active assertions.
+- Re-run full Pest, staff e2e, and orders e2e.
+
+---
+
+## 2026-05-29 Slice 15 - Staff CRUD Slice B Phase 2 Integration
+
+Claude's Slice A was merged to `main`, then Codex rebased `codex/staff-crud-office-assignments` onto `origin/main` cleanly.
+
+Phase 2 implementation:
+
+- Added Slice B cases to `StaffErrorCode`:
+  - `ROLE_MISMATCH_FOR_OFFICE_ASSIGN`
+  - `OFFICE_ASSIGNMENT_DUPLICATE`
+  - `OFFICE_ASSIGNMENT_LAST_REQUIRED`
+- Replaced `OfficeAssignmentService` Phase 1 `RuntimeException` stubs with `StaffDomainException`.
+- Removed controller-level stub error rendering from `OfficeAssignmentController`; global `StaffDomainException` rendering now owns the response shape.
+- Widened `CreateStaffRequest` to allow `role=office_staff` with required `office_assignments[]`, while keeping admin creation from sending assignments.
+- Wired `OfficeAssignmentService::attachMany()` into `StaffService::create()` for office staff creation.
+- Wired `StaffService::deactivate()` to soft-remove all active office assignments.
+- Replaced `StaffResource` inline assignment mapping with `OfficeAssignmentResource::collection(...)`.
+- Updated `StaffController` eager loading to `activeOfficeAssignments.office`.
+- Added the two office-assignment routes inside Claude's `admin.staff.*` group.
+- Activated the previously skipped office-assignment feature tests.
+- Added a StaffService create test for office staff + assignment creation.
+- Updated `scripts/staff-e2e.php` to assert deactivate removes assignments and to make the last-admin scenario independent from existing local DB admin rows.
+
+Verification:
+
+- `php artisan route:list --path=admin/staff`: 10 routes present, including `admin.staff.office-assignments.store` and `admin.staff.office-assignments.destroy`.
+- `php artisan test tests\Unit\Services\Staff\OfficeAssignmentServiceTest.php tests\Unit\Services\Staff\StaffServiceCreateTest.php tests\Feature\Staff\OfficeAssignmentControllerTest.php`: passed, 17 tests / 49 assertions.
+- `php artisan test tests\Feature\Staff tests\Unit\Services\Staff tests\Unit\Middleware\EnsurePasswordChangedMiddlewareTest.php tests\Unit\Policies\StaffPolicyTest.php tests\Feature\Auth\LoginSuspendedRejectionTest.php`: passed, 47 tests / 147 assertions.
+- `php artisan migrate`: applied `2026_05_20_000010_add_public_id_to_office_staff_assignments`.
+- `php artisan migrate:status --pending`: no pending migrations.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"`: all 6 staff smoke scenarios passed.
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`: all 32 order smoke scenarios passed.
+- `vendor/bin/pint.bat ...`: fixed formatting in `OfficeAssignmentService`.
+- Final `php artisan test`: passed, 91 tests / 311 assertions.
+
+Review note for Claude:
+
+- Confirm the `StaffResource` assignment shape is acceptable now that it delegates to `OfficeAssignmentResource` and exposes assignment/office public ids.
+- Confirm `StaffService::deactivate()` should remain a direct bulk update for active assignments rather than calling `OfficeAssignmentService::detach()` repeatedly. This intentionally bypasses the last-assignment guard because deactivate is the supported way to remove all assignments.
+
+---
+
+## 2026-05-31 Slice 16 - Staff CRUD Slice B Review Fix
+
+Claude reviewed Slice B and found a blocking assignment-lifecycle inversion in `StaffService`: the office-assignment soft-removal query had been added to `suspend()` instead of `deactivate()`.
+
+Fix applied:
+
+- Removed office-assignment soft-removal from `StaffService::suspend()`.
+- Added office-assignment soft-removal to `StaffService::deactivate()`.
+- Updated `scripts/staff-e2e.php` Scenario 4 to assert suspend preserves assignments.
+- Updated `scripts/staff-e2e.php` Scenario 5 to assert reinstate preserves assignments and deactivate removes them.
+- Added a `StaffServiceLifecycleTest` regression case covering suspend preservation and deactivate cleanup.
+
+Optional review note:
+
+- Kept nested `CreateStaffRequest.office_assignments.*.is_manager` required while standalone `AttachOfficeAssignmentRequest.is_manager` remains optional with default `false`. This is intentional: bulk account creation requires an explicit assignment payload; the attach endpoint spec explicitly defines a default.
+
+Verification:
+
+- `php -l app/Services/Staff/StaffService.php scripts/staff-e2e.php tests/Unit/Services/Staff/StaffServiceLifecycleTest.php`: passed.
+- `vendor/bin/pint.bat app/Services/Staff/StaffService.php scripts/staff-e2e.php tests/Unit/Services/Staff/StaffServiceLifecycleTest.php`: passed.
+- `git diff --check`: passed.
+- DB-backed Pest and smoke verification could not run because PostgreSQL on `127.0.0.1:5432` is unavailable and Docker Desktop is stopped. Starting `com.docker.service` from this session failed because Windows requires elevated access.
+
+Pending after Docker Desktop is started:
+
+- `php artisan test`
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"`
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`
+- `php artisan migrate:status --pending`

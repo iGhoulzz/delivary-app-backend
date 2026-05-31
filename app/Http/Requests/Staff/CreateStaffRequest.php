@@ -23,10 +23,15 @@ final class CreateStaffRequest extends FormRequest
             'first_name' => ['required', 'string', 'max:60'],
             'last_name' => ['required', 'string', 'max:60'],
             'email' => ['nullable', 'email', 'max:120', 'unique:users,email'],
-            'role' => ['required', Rule::in(['admin'])],
+            'role' => ['required', Rule::in(['admin', 'office_staff'])],
             'office_assignments' => [
-                'prohibited',
+                'required_if:role,office_staff',
+                'prohibited_if:role,admin',
+                'array',
+                'min:1',
             ],
+            'office_assignments.*.office_id' => ['required', 'integer', 'exists:office_locations,id'],
+            'office_assignments.*.is_manager' => ['required', 'boolean'],
         ];
     }
 
