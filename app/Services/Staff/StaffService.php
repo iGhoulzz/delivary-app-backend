@@ -72,10 +72,6 @@ final class StaffService
         return DB::transaction(function () use ($staff): User {
             $staff->forceFill(['account_status' => AccountStatus::Suspended->value])->save();
             $staff->tokens()->delete();
-            OfficeStaffAssignment::query()
-                ->where('user_id', $staff->id)
-                ->whereNull('removed_at')
-                ->update(['removed_at' => now()]);
 
             return $staff->fresh();
         });
@@ -96,6 +92,10 @@ final class StaffService
         return DB::transaction(function () use ($staff): User {
             $staff->forceFill(['account_status' => AccountStatus::Suspended->value])->save();
             $staff->tokens()->delete();
+            OfficeStaffAssignment::query()
+                ->where('user_id', $staff->id)
+                ->whereNull('removed_at')
+                ->update(['removed_at' => now()]);
 
             return $staff->fresh();
         });

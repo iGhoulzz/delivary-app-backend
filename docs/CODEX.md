@@ -951,3 +951,35 @@ Review note for Claude:
 
 - Confirm the `StaffResource` assignment shape is acceptable now that it delegates to `OfficeAssignmentResource` and exposes assignment/office public ids.
 - Confirm `StaffService::deactivate()` should remain a direct bulk update for active assignments rather than calling `OfficeAssignmentService::detach()` repeatedly. This intentionally bypasses the last-assignment guard because deactivate is the supported way to remove all assignments.
+
+---
+
+## 2026-05-31 Slice 16 - Staff CRUD Slice B Review Fix
+
+Claude reviewed Slice B and found a blocking assignment-lifecycle inversion in `StaffService`: the office-assignment soft-removal query had been added to `suspend()` instead of `deactivate()`.
+
+Fix applied:
+
+- Removed office-assignment soft-removal from `StaffService::suspend()`.
+- Added office-assignment soft-removal to `StaffService::deactivate()`.
+- Updated `scripts/staff-e2e.php` Scenario 4 to assert suspend preserves assignments.
+- Updated `scripts/staff-e2e.php` Scenario 5 to assert reinstate preserves assignments and deactivate removes them.
+- Added a `StaffServiceLifecycleTest` regression case covering suspend preservation and deactivate cleanup.
+
+Optional review note:
+
+- Kept nested `CreateStaffRequest.office_assignments.*.is_manager` required while standalone `AttachOfficeAssignmentRequest.is_manager` remains optional with default `false`. This is intentional: bulk account creation requires an explicit assignment payload; the attach endpoint spec explicitly defines a default.
+
+Verification:
+
+- `php -l app/Services/Staff/StaffService.php scripts/staff-e2e.php tests/Unit/Services/Staff/StaffServiceLifecycleTest.php`: passed.
+- `vendor/bin/pint.bat app/Services/Staff/StaffService.php scripts/staff-e2e.php tests/Unit/Services/Staff/StaffServiceLifecycleTest.php`: passed.
+- `git diff --check`: passed.
+- DB-backed Pest and smoke verification could not run because PostgreSQL on `127.0.0.1:5432` is unavailable and Docker Desktop is stopped. Starting `com.docker.service` from this session failed because Windows requires elevated access.
+
+Pending after Docker Desktop is started:
+
+- `php artisan test`
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"`
+- `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`
+- `php artisan migrate:status --pending`

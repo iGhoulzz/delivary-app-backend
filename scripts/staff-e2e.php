@@ -107,15 +107,17 @@ try {
     $assert($reset['user']->must_change_password === true, 'flag set after reset');
     $assert($coAdmin->fresh()->tokens()->count() === 0, 'tokens revoked');
 
-    echo "Scenario 4: admin suspends office_staff\n";
+    echo "Scenario 4: admin suspends office_staff (assignments preserved)\n";
     $suspended = $staffService->suspend($officeStaff['user'], $rootAdmin);
     $assert($suspended->account_status === AccountStatus::Suspended, 'office_staff suspended');
+    $assert($officeStaff['user']->fresh()->activeOfficeAssignments()->count() === 2, 'suspend preserves assignments');
 
-    echo "Scenario 5: admin deactivates office_staff\n";
-    $reinstated = $staffService->reinstate($officeStaff['user'], $rootAdmin);
+    echo "Scenario 5: admin reinstates then deactivates office_staff\n";
+    $reinstated = $staffService->reinstate($officeStaff['user']->fresh(), $rootAdmin);
+    $assert($reinstated->activeOfficeAssignments()->count() === 2, 'reinstate keeps assignments intact');
     $deactivated = $staffService->deactivate($reinstated, $rootAdmin);
     $assert($deactivated->account_status === AccountStatus::Suspended, 'deactivate returns suspended staff');
-    $assert($deactivated->activeOfficeAssignments()->count() === 0, 'all assignments removed');
+    $assert($deactivated->fresh()->activeOfficeAssignments()->count() === 0, 'deactivate removes all assignments');
 
     echo "Scenario 6: guards against self-modify and last-admin\n";
     try {
