@@ -65,14 +65,17 @@ Non-parameterized routes (`index`, `lookup`, `onboard`) are unaffected.
 ### 3.2 Controllers (9 methods)
 Signatures change `DriverProfile $driverProfile` → `User $driverUser`; resolve the profile inside, then apply the **existing** authorization to the resolved `$profile` (policy ability + `DriverProfile` argument unchanged — only the bound URL object changes). The two controllers authorize differently today; both mechanisms are preserved:
 
-- **Office** (`DriverOnboardingController::verifyPhone/submit`, `DriverDocumentController::store/destroy`) already call `$request->user()->can('manageInOffice', $driverProfile)`:
+- **Office** (`DriverOnboardingController::verifyPhone/submit`, `DriverDocumentController::store/destroy`) already call `$request->user()->can('manageInOffice', $driverProfile)` and return a **structured `WRONG_OFFICE` JSON** on failure (NOT a bare `abort(403)`) — preserve that exact shape:
   ```php
   public function submit(Request $request, User $driverUser): JsonResponse
   {
       $profile = $driverUser->driverProfile;
       abort_unless($profile !== null, 404);
       if (! $request->user()->can('manageInOffice', $profile)) {
-          abort(403);   // existing behavior, unchanged
+          return response()->json([
+              'error' => DriverErrorCode::WrongOffice->value,
+              'message' => 'Driver belongs to a different office.',
+          ], DriverErrorCode::WrongOffice->httpStatus());   // existing shape, unchanged
       }
       // ... unchanged body operating on $profile
   }
@@ -96,7 +99,10 @@ public function destroy(Request $request, User $driverUser, DriverDocumentType $
     $profile = $driverUser->driverProfile;
     abort_unless($profile !== null, 404);
     if (! $request->user()->can('manageInOffice', $profile)) {
-        abort(403);   // existing behavior, unchanged
+        return response()->json([
+            'error' => DriverErrorCode::WrongOffice->value,
+            'message' => 'Driver belongs to a different office.',
+        ], DriverErrorCode::WrongOffice->httpStatus());   // existing shape, unchanged
     }
     $document = DriverDocument::query()
         ->where('driver_id', $driverUser->id)
@@ -137,6 +143,12 @@ Nested office objects currently use the internal id (`'id' => $this->office?->id
 - `actor_id` → `actor:{id,name}` nullable (user `public_id`).
 - `metadata` handled per §5.
 
+### 4.7 Controller-built JSON leaks (Codex-confirmed)
+Two responses are built inline in controllers (not via a Resource) and leak internal ids:
+- **`Api/Driver/RegionController::index`** (line ~34): returns `'office_id' => $profile->office_id` (+ separate `office_name`). Consolidate to `'office' => ['id' => $profile->office?->public_id, 'name' => $profile->office?->name]`. Client-facing (driver's own regions).
+- **`Api/Driver/AccountController`** (line ~26): returns **raw transaction models** via `->get(['id', ...])` — leaks the internal transaction `id` and violates the "always use a JsonResource" rule. Add **`DriverAccountTransactionResource`** that **omits `id`** (the `driver_account_transactions` table has no `public_id`; transactions are not individually addressable) and exposes `bucket`, `amount`, `reason`, `balance_after`, `created_at`. Wrap the response with it.
+- **`Api/Me/Settlement/ShowEarningsController`** (line ~27): returns `'seller_id' => $user->id` (internal). The caller *is* the seller (`$request->user()`), so **omit `seller_id`** (redundant) — or expose `$user->public_id` if a value is wanted. (Found in the controller-inline-JSON completeness sweep; missed by both the original audit and the first review.)
+
 ## 5. Metadata sanitization (write-time summaries + read-time allowlist)
 Raw `order_status_logs.metadata` must never be emitted verbatim (redirect-return logs carry `previous_office_id`/`new_office_id`; other log types may carry driver/user/order internal ids). Approach, in two layers:
 
@@ -160,7 +172,10 @@ Endpoints must accept `public_id`, not internal ids. For each, the FormRequest v
 | `RedirectReturnRequest` | `office_id` (int) | `office_public_id` |
 | `ListSettlementsRequest` | `office_id` filter (int) | `office_public_id` (resolve, then filter by internal id) |
 | `ListSellerPayoutsRequest` | `office_id` filter (int) | `office_public_id` |
+| **Admin driver index** (`AdminDriverController::index`, line ~31) | `office_id` query filter (int, read via `request()`) | `office_public_id` via a **dedicated `IndexDriverRequest`** FormRequest; resolve once, then filter |
+| **Staff index** (`StaffController::index`, line ~39) | `office_id` query filter (int, read via `request()`) | `office_public_id` via a **dedicated `IndexStaffRequest`** FormRequest; resolve once, then filter |
 
+- Both index endpoints currently read filters straight off `request()` with no FormRequest. Introduce dedicated index FormRequests so the `office_public_id` filter is validated (`exists:office_locations,public_id`) and resolved once before the query (also aligns them with the "FormRequest per endpoint" rule).
 - Resolution helper pattern: `OfficeLocation::where('public_id', $publicId)->firstOrFail()` (or `value('id')`), done once at the request/DTO boundary so services keep receiving typed models/ints.
 - **`UpdateRegionsRequest.region_ids` stays internal** — `regions` is a documented `public_id`-exempt lookup table.
 - These are **breaking request-contract changes** — acceptable now (no production client); note them in the PR description.
@@ -170,10 +185,12 @@ Add a note to `docs/CLAUDE.md` (Key Conventions → Public IDs): reference/looku
 
 ## 8. Performance — N+1 prevention
 Eager-load every newly-nested relation at the query/controller layer (actual relationship names):
-- driver listings/detail → `user`, `office`, `documents`
+- driver listing (`AdminDriverController::index`) → `user`, `office`
+- driver full detail (`DriverProfileFullResource`) → `user`, `office`, **`approvedBy`** (the admin who approved → `approved_by:{id,name}`), and **`documents.driver.media`** — `DriverDocumentResource` reads `$this->driver` and `$user->getFirstMedia(...)` (Spatie), so the document's driver **and** that driver's media must be eager-loaded to avoid N+1 when rendering the document collection
 - order resources → `sender`, `receiverUser`, `receiverGuest`, `driver`, `returnOffice`
 - office inventory → `office`, `receivedByStaff`, `retrievedByStaff`, `abandonedByAdmin` (confirm exact names in planning)
 - settlement/payout → `office` (+ existing `orders`)
+- driver regions (`RegionController`) → `office`
 - status log → `actor` (metadata uses stored public summaries, no relation load)
 
 Resources use `whenLoaded()`/`relationLoaded()` guards; no queries inside `toArray()`.
