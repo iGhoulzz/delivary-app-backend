@@ -47,7 +47,7 @@ final class DriverController extends Controller
         $driverProfile = $driverUser->driverProfile;
         abort_unless($driverProfile !== null, 404);
 
-        $driverProfile->load(['user', 'office']);
+        $driverProfile->load(['user', 'office', 'approvedBy', 'documents.driver.media']);
 
         return response()->json([
             'driver_profile' => (new DriverProfileFullResource($driverProfile))->resolve($request),

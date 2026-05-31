@@ -44,7 +44,7 @@ it('shows a driver by user public_id', function (): void {
     $response = $this->getJson("/api/admin/drivers/{$profile->user->public_id}");
 
     expect($response->status())->toBe(200);
-    expect($response->json('driver_profile.id'))->toBe($profile->id);
+    expect($response->json('driver_profile.id'))->toBe($profile->user->public_id);
 });
 
 it('returns 404 for an unknown driver public_id', function (): void {

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
-use App\Models\DriverDocument;
 use App\Models\DriverProfile;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -15,15 +14,12 @@ final class DriverProfileFullResource extends JsonResource
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {
-        $documents = DriverDocument::where('driver_id', $this->user_id)->get();
-
         return [
-            'id' => $this->id,
+            'id' => $this->user?->public_id,
             'status' => $this->status->value,
             'activity_status' => $this->activity_status->value,
-            'office_id' => $this->office_id,
             'office' => $this->relationLoaded('office') && $this->office !== null
-                ? ['id' => $this->office->id, 'name' => $this->office->name]
+                ? ['id' => $this->office->public_id, 'name' => $this->office->name]
                 : null,
             'user' => $this->relationLoaded('user') && $this->user !== null ? [
                 'id' => $this->user->public_id,
@@ -41,11 +37,13 @@ final class DriverProfileFullResource extends JsonResource
                 'color' => $this->vehicle_color,
                 'model' => $this->vehicle_model,
             ],
-            'documents' => DriverDocumentResource::collection($documents)->resolve($request),
+            'documents' => DriverDocumentResource::collection($this->whenLoaded('documents')),
             'audit' => [
                 'created_at' => $this->created_at?->toIso8601String(),
                 'approved_at' => $this->approved_at?->toIso8601String(),
-                'approved_by_admin_id' => $this->approved_by_admin_id,
+                'approved_by' => $this->relationLoaded('approvedBy') && $this->approvedBy !== null
+                    ? ['id' => $this->approvedBy->public_id, 'name' => $this->approvedBy->fullName()]
+                    : null,
                 'rejected_at' => $this->rejected_at?->toIso8601String(),
             ],
             'lifetime_deliveries' => $this->lifetime_deliveries,

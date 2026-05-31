@@ -15,9 +15,13 @@ final class DriverProfileResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id' => $this->id,
-            'user_id' => $this->user_id,
-            'office_id' => $this->office_id,
+            'id' => $this->user?->public_id,
+            'user' => $this->relationLoaded('user') && $this->user !== null
+                ? ['id' => $this->user->public_id, 'name' => $this->user->fullName()]
+                : null,
+            'office' => $this->relationLoaded('office') && $this->office !== null
+                ? ['id' => $this->office->public_id, 'name' => $this->office->name]
+                : null,
             'status' => $this->status->value,
             'activity_status' => $this->activity_status->value,
             'vehicle_type' => $this->vehicle_type->value,
