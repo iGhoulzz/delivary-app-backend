@@ -42,8 +42,11 @@ final class DriverController extends Controller
         return DriverProfileResource::collection($query->paginate(25));
     }
 
-    public function show(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function show(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         $driverProfile->load(['user', 'office']);
 
         return response()->json([
@@ -51,8 +54,11 @@ final class DriverController extends Controller
         ]);
     }
 
-    public function approve(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function approve(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         /** @var User $admin */
         $admin = $request->user();
         $result = $this->approvalService->approve($driverProfile, $admin);
@@ -69,18 +75,27 @@ final class DriverController extends Controller
         ]);
     }
 
-    public function reject(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function reject(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         return $this->respondWithTransition($request, $this->transitionService->reject($driverProfile));
     }
 
-    public function suspend(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function suspend(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         return $this->respondWithTransition($request, $this->transitionService->suspend($driverProfile));
     }
 
-    public function reinstate(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function reinstate(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         return $this->respondWithTransition($request, $this->transitionService->reinstate($driverProfile));
     }
 
