@@ -31,8 +31,9 @@ final class RegionController extends Controller
         $effective = $selected->isEmpty() ? $available : $selected;
 
         return response()->json([
-            'office_id' => $profile->office_id,
-            'office_name' => $profile->office?->name,
+            'office' => $profile->office !== null
+                ? ['id' => $profile->office->public_id, 'name' => $profile->office->name]
+                : null,
             'available' => RegionResource::collection($available)->resolve($request),
             'selected' => RegionResource::collection($selected)->resolve($request),
             'effective' => RegionResource::collection($effective)->resolve($request),
