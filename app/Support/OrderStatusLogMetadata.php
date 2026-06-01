@@ -54,17 +54,16 @@ final class OrderStatusLogMetadata
     ];
 
     /**
-     * Read-time guard, applied recursively and fail-closed. Rules at EVERY depth:
+     * Read-time guard, fail-closed. All current writers emit FLAT scalar
+     * metadata, so the rules are:
      *
-     *  1. Drop any key ending in `_id` unless it ends in `_public_id`
-     *     (defensive: a future writer cannot silently leak an internal id,
-     *     even nested inside a sub-array).
-     *  2. For `*_public_id` keys, keep the value only if it is a string or null;
-     *     drop non-string values (public ids are ULID-shaped strings).
-     *  3. Recurse into nested arrays, applying rules 1–4 to each level.
-     *  4. At the TOP level ONLY, additionally require the key be in ALLOWLIST.
-     *     Sub-keys are not allowlisted (we have no per-context sub-key list);
-     *     the `_id` guard is what protects nested structures.
+     *  1. Keep only keys present in ALLOWLIST.
+     *  2. Drop any key ending in `_id` unless it ends in `_public_id`
+     *     (defensive: a future writer cannot silently leak an internal id).
+     *  3. Drop any nested array value entirely — metadata has no nested schema
+     *     yet, and nesting would bypass the key-based guards (e.g. `['id'=>1]`).
+     *     Add explicit recursive handling here if/when a writer needs nesting.
+     *  4. For `*_public_id` keys, keep the value only if it is a string or null.
      *
      * No DB queries.
      *
@@ -77,30 +76,19 @@ final class OrderStatusLogMetadata
             return [];
         }
 
-        return self::sanitizeLevel($metadata, true);
-    }
-
-    /**
-     * @param  array<array-key, mixed>  $data
-     * @return array<array-key, mixed>
-     */
-    private static function sanitizeLevel(array $data, bool $topLevel): array
-    {
         $clean = [];
-        foreach ($data as $key => $value) {
-            if ($topLevel && is_string($key) && ! in_array($key, self::ALLOWLIST, true)) {
-                continue;
+        foreach ($metadata as $key => $value) {
+            if (! is_string($key) || ! in_array($key, self::ALLOWLIST, true)) {
+                continue; // top-level allowlist
             }
-            if (is_string($key) && str_ends_with($key, '_id') && ! str_ends_with($key, '_public_id')) {
-                continue; // fail-closed on internal-id-shaped keys at any depth
-            }
-            if (is_string($key) && str_ends_with($key, '_public_id') && $value !== null && ! is_string($value)) {
-                continue; // public ids are string|null; drop anything else
+            if (str_ends_with($key, '_id') && ! str_ends_with($key, '_public_id')) {
+                continue; // fail-closed on internal-id-shaped keys
             }
             if (is_array($value)) {
-                $clean[$key] = self::sanitizeLevel($value, false);
-
-                continue;
+                continue; // metadata is flat scalars; reject nested arrays entirely (no nested schema yet)
+            }
+            if (str_ends_with($key, '_public_id') && $value !== null && ! is_string($value)) {
+                continue; // public ids are string|null
             }
             $clean[$key] = $value;
         }

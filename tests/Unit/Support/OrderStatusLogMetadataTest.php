@@ -63,14 +63,16 @@ it('fails closed: a non-allowlisted internal-id-shaped key is dropped', function
     expect($clean)->toBe(['event' => 'order_cancelled']);
 });
 
-it('recursively drops internal-id-shaped keys inside nested arrays', function (): void {
+it('drops nested-array values entirely (no nested schema; fail-closed)', function (): void {
+    // A nested array could smuggle internal ids past the key-based guards
+    // (e.g. plain `id` or camelCase `userId` do not match the `_id` suffix).
+    // Metadata is flat scalars, so any array value is dropped wholesale.
     $clean = OrderStatusLogMetadata::sanitize([
-        'event' => ['driver_id' => 1, 'note' => 'x'],
+        'event' => ['id' => 123, 'userId' => 456],   // array value — dropped entirely
         'previous_office_public_id' => '01ABC',
     ]);
 
     expect($clean)->toBe([
-        'event' => ['note' => 'x'],
         'previous_office_public_id' => '01ABC',
     ]);
 });

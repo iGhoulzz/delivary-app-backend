@@ -33,7 +33,7 @@ final class OrderController extends Controller
     public function index(AdminListOrdersRequest $request): AnonymousResourceCollection
     {
         $validated = $request->validated();
-        $query = Order::query()->with(AdminOrderResource::RELATIONS);
+        $query = Order::query()->with(AdminOrderResource::LIST_RELATIONS);
 
         if (isset($validated['status'])) {
             $query->where('status', $validated['status']);

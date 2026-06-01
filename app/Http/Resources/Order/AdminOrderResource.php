@@ -17,12 +17,26 @@ final class AdminOrderResource extends JsonResource
      *
      * @var array<int, string>
      */
-    public const RELATIONS = [
+    /**
+     * Relations needed for list/summary rendering (no per-row timeline).
+     *
+     * @var array<int, string>
+     */
+    public const LIST_RELATIONS = [
         'sender',
         'receiverUser',
         'receiverGuest',
         'driver.driverProfile',
         'returnOffice',
+    ];
+
+    /**
+     * Full relation graph for detail/mutation responses (adds the timeline).
+     *
+     * @var array<int, string>
+     */
+    public const RELATIONS = [
+        ...self::LIST_RELATIONS,
         'statusLogs.actor',
     ];
 

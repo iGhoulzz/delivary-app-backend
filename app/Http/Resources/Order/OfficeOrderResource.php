@@ -25,11 +25,8 @@ final class OfficeOrderResource extends JsonResource
         'officeInventory.retrievedByStaff',
         'officeInventory.abandonedByAdmin',
         'sender',
-        'receiverUser',
-        'receiverGuest',
         'driver.driverProfile',
         'returnOffice',
-        'statusLogs.actor',
     ];
 
     /** @return array<string, mixed> */
