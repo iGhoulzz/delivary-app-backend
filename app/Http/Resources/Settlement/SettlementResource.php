@@ -19,7 +19,7 @@ final class SettlementResource extends JsonResource
                 'name' => $this->driver?->fullName(),
             ],
             'office' => [
-                'id' => $this->office?->id,
+                'id' => $this->office?->public_id,
                 'name' => $this->office?->name,
             ],
             'processed_by_staff' => [

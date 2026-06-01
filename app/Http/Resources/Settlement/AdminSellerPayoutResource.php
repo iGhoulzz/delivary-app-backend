@@ -20,7 +20,7 @@ final class AdminSellerPayoutResource extends JsonResource
                 'phone' => $this->user?->phone_number,
             ],
             'office' => [
-                'id' => $this->office?->id,
+                'id' => $this->office?->public_id,
                 'name' => $this->office?->name,
             ],
             'paid_at' => $this->paid_at?->toIso8601String(),
