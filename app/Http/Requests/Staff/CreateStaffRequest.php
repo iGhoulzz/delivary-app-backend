@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Requests\Staff;
 
 use App\Support\DTO\CreateStaffInput;
+use App\Support\Resolvers\PublicIdResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -30,7 +31,7 @@ final class CreateStaffRequest extends FormRequest
                 'array',
                 'min:1',
             ],
-            'office_assignments.*.office_id' => ['required', 'integer', 'exists:office_locations,id'],
+            'office_assignments.*.office_public_id' => ['required', 'string', 'exists:office_locations,public_id'],
             'office_assignments.*.is_manager' => ['required', 'boolean'],
         ];
     }
@@ -43,7 +44,21 @@ final class CreateStaffRequest extends FormRequest
             lastName: $this->string('last_name')->toString(),
             email: $this->input('email'),
             role: $this->string('role')->toString(),
-            officeAssignments: $this->input('office_assignments', []),
+            officeAssignments: $this->resolveOfficeAssignments(),
         );
+    }
+
+    /**
+     * @return array<int, array{office_id: int, is_manager: bool}>
+     */
+    private function resolveOfficeAssignments(): array
+    {
+        /** @var array<int, array{office_public_id?: string, is_manager?: bool}> $assignments */
+        $assignments = $this->input('office_assignments', []);
+
+        return array_map(static fn (array $assignment): array => [
+            'office_id' => PublicIdResolver::officeId($assignment['office_public_id'] ?? null),
+            'is_manager' => (bool) ($assignment['is_manager'] ?? false),
+        ], $assignments);
     }
 }

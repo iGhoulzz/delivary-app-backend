@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Staff;
 
+use App\Support\Resolvers\PublicIdResolver;
 use Illuminate\Foundation\Http\FormRequest;
 
 final class AttachOfficeAssignmentRequest extends FormRequest
@@ -19,9 +20,14 @@ final class AttachOfficeAssignmentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'office_id' => ['required', 'integer', 'exists:office_locations,id'],
+            'office_public_id' => ['required', 'string', 'exists:office_locations,public_id'],
             'is_manager' => ['sometimes', 'boolean'],
         ];
+    }
+
+    public function officeId(): int
+    {
+        return PublicIdResolver::officeId($this->string('office_public_id')->toString());
     }
 
     public function isManager(): bool
