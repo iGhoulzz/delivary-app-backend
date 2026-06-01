@@ -39,12 +39,29 @@ it('attaches an office to an office staff user via post', function (): void {
 
     $response = $this->postJson(
         "/api/admin/staff/{$staff->public_id}/office-assignments",
-        ['office_id' => $office->id, 'is_manager' => true],
+        ['office_public_id' => $office->public_id, 'is_manager' => true],
     );
 
     expect($response->status())->toBe(201);
     expect($response->json('office.name'))->toBe($office->name);
     expect($response->json('is_manager'))->toBeTrue();
+});
+
+it('rejects attaching an office by bare internal id', function (): void {
+    $admin = User::factory()->create();
+    $admin->assignRole('admin');
+    Sanctum::actingAs($admin);
+
+    $staff = User::factory()->create();
+    $staff->assignRole('office_staff');
+    $office = makeStaffCrudFeatureOffice();
+
+    $response = $this->postJson(
+        "/api/admin/staff/{$staff->public_id}/office-assignments",
+        ['office_public_id' => (string) $office->id, 'is_manager' => false],
+    );
+
+    expect($response->status())->toBe(422);
 });
 
 it('rejects attaching an office to an admin user', function (): void {
@@ -57,7 +74,7 @@ it('rejects attaching an office to an admin user', function (): void {
 
     $response = $this->postJson(
         "/api/admin/staff/{$target->public_id}/office-assignments",
-        ['office_id' => makeStaffCrudFeatureOffice()->id, 'is_manager' => false],
+        ['office_public_id' => makeStaffCrudFeatureOffice()->public_id, 'is_manager' => false],
     );
 
     expect($response->status())->toBe(422);
@@ -82,7 +99,7 @@ it('rejects duplicate active assignment with conflict', function (): void {
 
     $response = $this->postJson(
         "/api/admin/staff/{$staff->public_id}/office-assignments",
-        ['office_id' => $office->id, 'is_manager' => false],
+        ['office_public_id' => $office->public_id, 'is_manager' => false],
     );
 
     expect($response->status())->toBe(409);

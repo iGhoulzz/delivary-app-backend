@@ -21,6 +21,8 @@ final class ProfileController extends Controller
             return response()->json(['error' => 'no_driver_profile'], 404);
         }
 
+        $profile->loadMissing(DriverProfileResource::RELATIONS);
+
         return response()->json([
             'driver_profile' => (new DriverProfileResource($profile))->resolve($request),
         ]);

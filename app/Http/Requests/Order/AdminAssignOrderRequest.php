@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Order;
 
+use App\Support\Resolvers\PublicIdResolver;
 use Illuminate\Foundation\Http\FormRequest;
 
 final class AdminAssignOrderRequest extends FormRequest
@@ -19,8 +20,13 @@ final class AdminAssignOrderRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'driver_id' => ['required', 'integer', 'exists:users,id'],
+            'driver_public_id' => ['required', 'string', 'exists:users,public_id'],
             'force' => ['sometimes', 'boolean'],
         ];
+    }
+
+    public function driverUserId(): int
+    {
+        return PublicIdResolver::userId($this->string('driver_public_id')->toString());
     }
 }

@@ -89,9 +89,8 @@ final class FailedDeliveryService
                 notes: $notes,
                 metadata: [
                     'event' => 'office_receive_return',
-                    'office_id' => $order->return_office_id,
+                    'return_office_public_id' => $order->returnOffice?->public_id,
                     'shelf_location' => $shelfLocation,
-                    'inventory_id' => $inventory->id,
                 ],
             );
 
@@ -213,7 +212,7 @@ final class FailedDeliveryService
 
         return DB::transaction(function () use ($admin, $order, $office, $reason): Order {
             $order = Order::query()->whereKey($order->id)->lockForUpdate()->firstOrFail();
-            $previousOfficeId = $order->return_office_id;
+            $previousOffice = $order->returnOffice()->first();
 
             $order->forceFill(['return_office_id' => $office->id])->save();
 
@@ -226,8 +225,8 @@ final class FailedDeliveryService
                 'reason' => $reason,
                 'metadata' => [
                     'event' => 'return_office_redirected',
-                    'previous_office_id' => $previousOfficeId,
-                    'new_office_id' => $office->id,
+                    'previous_office_public_id' => $previousOffice?->public_id,
+                    'new_office_public_id' => $office->public_id,
                 ],
             ]);
 
@@ -352,7 +351,7 @@ final class FailedDeliveryService
                     'event' => 'mark_delivery_failed',
                     'return_reason' => $reason->value,
                     'return_fault' => $fault->value,
-                    'return_office_id' => $office->id,
+                    'return_office_public_id' => $office->public_id,
                 ],
             );
 

@@ -142,10 +142,10 @@ Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_r
     Route::get('/', [DriverOnboardingController::class, 'index']);
     Route::post('lookup', [DriverOnboardingController::class, 'lookup']);
     Route::post('onboard', [DriverOnboardingController::class, 'onboard']);
-    Route::post('{driverProfile}/verify-phone', [DriverOnboardingController::class, 'verifyPhone']);
-    Route::post('{driverProfile}/submit', [DriverOnboardingController::class, 'submit']);
-    Route::post('{driverProfile}/documents', [DriverDocumentController::class, 'store']);
-    Route::delete('{driverProfile}/documents/{driverDocument}', [DriverDocumentController::class, 'destroy']);
+    Route::post('{driverUser:public_id}/verify-phone', [DriverOnboardingController::class, 'verifyPhone']);
+    Route::post('{driverUser:public_id}/submit', [DriverOnboardingController::class, 'submit']);
+    Route::post('{driverUser:public_id}/documents', [DriverDocumentController::class, 'store']);
+    Route::delete('{driverUser:public_id}/documents/{documentType}', [DriverDocumentController::class, 'destroy']);
 });
 
 Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_required'])->prefix('office/orders')->group(function (): void {
@@ -182,11 +182,11 @@ Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_r
 // ─── /admin/drivers — admin driver lifecycle management ─────────────────
 Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])->prefix('admin/drivers')->group(function (): void {
     Route::get('/', [AdminDriverController::class, 'index']);
-    Route::get('{driverProfile}', [AdminDriverController::class, 'show']);
-    Route::post('{driverProfile}/approve', [AdminDriverController::class, 'approve']);
-    Route::post('{driverProfile}/reject', [AdminDriverController::class, 'reject']);
-    Route::post('{driverProfile}/suspend', [AdminDriverController::class, 'suspend']);
-    Route::post('{driverProfile}/reinstate', [AdminDriverController::class, 'reinstate']);
+    Route::get('{driverUser:public_id}', [AdminDriverController::class, 'show']);
+    Route::post('{driverUser:public_id}/approve', [AdminDriverController::class, 'approve']);
+    Route::post('{driverUser:public_id}/reject', [AdminDriverController::class, 'reject']);
+    Route::post('{driverUser:public_id}/suspend', [AdminDriverController::class, 'suspend']);
+    Route::post('{driverUser:public_id}/reinstate', [AdminDriverController::class, 'reinstate']);
 });
 
 // /admin/orders - admin order lifecycle management

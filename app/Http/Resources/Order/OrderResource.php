@@ -97,7 +97,9 @@ final class OrderResource extends JsonResource
         $base = [
             'reason' => $o->return_reason?->value,
             'fault' => $o->return_fault?->value,
-            'office_id' => $o->return_office_id,
+            'return_office' => $o->relationLoaded('returnOffice') && $o->returnOffice !== null
+                ? ['id' => $o->returnOffice->public_id, 'name' => $o->returnOffice->name]
+                : null,
             'returned_to_office_at' => $o->returned_to_office_at?->toIso8601String(),
             'retrieved_by_seller_at' => $o->retrieved_by_seller_at?->toIso8601String(),
             'abandoned_at' => $o->abandoned_at?->toIso8601String(),

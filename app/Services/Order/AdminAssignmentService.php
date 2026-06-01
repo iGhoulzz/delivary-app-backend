@@ -97,7 +97,7 @@ final class AdminAssignmentService
 
             $this->log($order, $from, OrderStatus::DriverEnRoutePickup, $admin, [
                 'event' => 'admin_manual_assign',
-                'driver_id' => $driver->id,
+                'driver_public_id' => $driver->public_id,
                 'force' => $force,
             ]);
 
@@ -185,7 +185,7 @@ final class AdminAssignmentService
 
             $this->log($order, $from, OrderStatus::AwaitingDriver, $admin, [
                 'event' => $driverFault ? 'admin_unassign_driver_fault' : 'admin_unassign',
-                'driver_id' => $driverId,
+                'driver_public_id' => $driver->public_id,
                 'reset_tier' => $resetTier,
                 'driver_fault' => $driverFault,
             ], $reason);

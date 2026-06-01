@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Enums\DriverErrorCode;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Driver\IndexDriverRequest;
 use App\Http\Resources\DriverProfileFullResource;
 use App\Http\Resources\DriverProfileResource;
 use App\Models\DriverProfile;
@@ -23,12 +24,12 @@ final class DriverController extends Controller
         private readonly DriverStatusTransitionService $transitionService,
     ) {}
 
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(IndexDriverRequest $request): AnonymousResourceCollection
     {
         $query = DriverProfile::query()
-            ->with(['user', 'office'])
+            ->with(DriverProfileResource::RELATIONS)
             ->when($request->input('status'), fn ($q, $s) => $q->where('status', (string) $s))
-            ->when($request->input('office_id'), fn ($q, $o) => $q->where('office_id', (int) $o))
+            ->when($request->officeId(), fn ($q, $id) => $q->where('office_id', $id))
             ->orderByRaw("CASE status WHEN 'pending_approval' THEN 0 ELSE 1 END")
             ->oldest();
 
@@ -42,17 +43,23 @@ final class DriverController extends Controller
         return DriverProfileResource::collection($query->paginate(25));
     }
 
-    public function show(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function show(Request $request, User $driverUser): JsonResponse
     {
-        $driverProfile->load(['user', 'office']);
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
+        $driverProfile->loadMissing(DriverProfileFullResource::RELATIONS);
 
         return response()->json([
             'driver_profile' => (new DriverProfileFullResource($driverProfile))->resolve($request),
         ]);
     }
 
-    public function approve(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function approve(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         /** @var User $admin */
         $admin = $request->user();
         $result = $this->approvalService->approve($driverProfile, $admin);
@@ -65,22 +72,31 @@ final class DriverController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileFullResource($result))->resolve($request),
+            'driver_profile' => (new DriverProfileFullResource($result->loadMissing(DriverProfileFullResource::RELATIONS)))->resolve($request),
         ]);
     }
 
-    public function reject(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function reject(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         return $this->respondWithTransition($request, $this->transitionService->reject($driverProfile));
     }
 
-    public function suspend(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function suspend(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         return $this->respondWithTransition($request, $this->transitionService->suspend($driverProfile));
     }
 
-    public function reinstate(Request $request, DriverProfile $driverProfile): JsonResponse
+    public function reinstate(Request $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         return $this->respondWithTransition($request, $this->transitionService->reinstate($driverProfile));
     }
 
@@ -94,7 +110,7 @@ final class DriverController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileResource($result))->resolve($request),
+            'driver_profile' => (new DriverProfileResource($result->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
         ]);
     }
 }

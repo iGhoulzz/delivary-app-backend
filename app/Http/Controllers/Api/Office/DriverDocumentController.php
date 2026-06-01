@@ -11,7 +11,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Driver\UploadDriverDocumentRequest;
 use App\Http\Resources\DriverDocumentResource;
 use App\Models\DriverDocument;
-use App\Models\DriverProfile;
 use App\Models\User;
 use App\Services\Driver\DriverDocumentService;
 use Illuminate\Http\JsonResponse;
@@ -22,8 +21,11 @@ final class DriverDocumentController extends Controller
 {
     public function __construct(private readonly DriverDocumentService $service) {}
 
-    public function store(UploadDriverDocumentRequest $request, DriverProfile $driverProfile): JsonResponse
+    public function store(UploadDriverDocumentRequest $request, User $driverUser): JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         /** @var User $staff */
         $staff = $request->user();
 
@@ -53,8 +55,11 @@ final class DriverDocumentController extends Controller
         ], 201);
     }
 
-    public function destroy(Request $request, DriverProfile $driverProfile, DriverDocument $driverDocument): Response|JsonResponse
+    public function destroy(Request $request, User $driverUser, DriverDocumentType $documentType): Response|JsonResponse
     {
+        $driverProfile = $driverUser->driverProfile;
+        abort_unless($driverProfile !== null, 404);
+
         /** @var User $staff */
         $staff = $request->user();
         if (! $staff->can('manageInOffice', $driverProfile)) {
@@ -63,11 +68,13 @@ final class DriverDocumentController extends Controller
         if ($driverProfile->status !== DriverStatus::PreRegistered) {
             return response()->json(['error' => DriverErrorCode::LockedPostSubmission->value], DriverErrorCode::LockedPostSubmission->httpStatus());
         }
-        if ($driverDocument->driver_id !== $driverProfile->user_id) {
-            return response()->json(['error' => 'mismatch'], 403);
-        }
 
-        $this->service->delete($driverDocument);
+        $document = DriverDocument::query()
+            ->where('driver_id', $driverUser->id)
+            ->where('document_type', $documentType->value)
+            ->firstOrFail();
+
+        $this->service->delete($document);
 
         return response()->noContent();
     }

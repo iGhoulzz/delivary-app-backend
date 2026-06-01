@@ -21,7 +21,10 @@ final class PreregistrationController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $result = $this->service->preregister($user, $request->validated());
+        $result = $this->service->preregister($user, [
+            ...$request->validated(),
+            'office_id' => $request->officeId(),
+        ]);
 
         if ($result instanceof DriverErrorCode) {
             return response()->json([
@@ -31,7 +34,7 @@ final class PreregistrationController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileResource($result))->resolve($request),
+            'driver_profile' => (new DriverProfileResource($result->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
         ], Response::HTTP_CREATED);
     }
 }

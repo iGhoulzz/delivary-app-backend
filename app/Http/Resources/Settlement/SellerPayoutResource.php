@@ -15,7 +15,7 @@ final class SellerPayoutResource extends JsonResource
             'id' => $this->public_id,
             'amount' => (string) $this->amount,
             'office' => [
-                'id' => $this->office?->id,
+                'id' => $this->office?->public_id,
                 'name' => $this->office?->name,
             ],
             'paid_at' => $this->paid_at?->toIso8601String(),

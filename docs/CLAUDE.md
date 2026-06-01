@@ -123,6 +123,8 @@ public function getRouteKeyName(): string { return 'public_id'; }
 'id' => $this->public_id,
 ```
 
+**Exception — reference/lookup tables:** `regions` and `service_areas` intentionally have **no** `public_id`. They are stable, non-sensitive geographic reference data (not user/business records), so exposing or accepting their numeric `id` is an accepted, deliberate exception to Critical Rule 11. Do not add `public_id` to these tables. (Established during the 2026-05-31 internal-id exposure remediation.)
+
 ### Money Fields
 Always `decimal(12, 2)`. Use `bcmath` for calculations — never floats.
 

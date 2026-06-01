@@ -21,7 +21,7 @@ final class DriverProfileController extends Controller
         return response()->json([
             'driver_profile' => $profile === null
                 ? null
-                : (new DriverProfileResource($profile))->resolve($request),
+                : (new DriverProfileResource($profile->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
         ]);
     }
 }

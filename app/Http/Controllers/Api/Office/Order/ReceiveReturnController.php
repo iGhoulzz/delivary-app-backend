@@ -18,11 +18,13 @@ final class ReceiveReturnController extends Controller
     {
         $this->authorize('receiveReturnByOffice', $order);
 
-        return new OfficeOrderResource($this->failures->receiveReturn(
+        $order = $this->failures->receiveReturn(
             staff: $request->user(),
             order: $order,
             shelfLocation: is_string($request->input('shelf_location')) ? $request->input('shelf_location') : null,
             notes: is_string($request->input('notes')) ? $request->input('notes') : null,
-        ));
+        );
+
+        return new OfficeOrderResource($order->loadMissing(OfficeOrderResource::RELATIONS));
     }
 }

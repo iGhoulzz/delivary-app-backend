@@ -24,7 +24,7 @@ final class OfficeAssignmentController extends Controller
 
         $assignment = $this->service->attach(
             $staff,
-            $request->integer('office_id'),
+            $request->officeId(),
             $request->isManager(),
         );
 

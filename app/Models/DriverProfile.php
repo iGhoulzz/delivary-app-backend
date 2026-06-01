@@ -67,6 +67,15 @@ final class DriverProfile extends Model
     }
 
     /**
+     * Onboarding documents for this driver, joined through the shared user_id
+     * since `driver_documents` is keyed by `driver_id` (which references users.id).
+     */
+    public function documents(): HasMany
+    {
+        return $this->hasMany(DriverDocument::class, 'driver_id', 'user_id');
+    }
+
+    /**
      * The driver's three-bucket account. Joined through the shared user_id
      * since both `driver_profiles` and `driver_accounts` reference the user.
      */

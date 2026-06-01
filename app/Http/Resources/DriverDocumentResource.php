@@ -34,7 +34,6 @@ final class DriverDocumentResource extends JsonResource
         }
 
         return [
-            'id' => $this->id,
             'document_type' => $type,
             'verified' => (bool) $this->verified,
             'verified_at' => $this->verified_at?->toIso8601String(),

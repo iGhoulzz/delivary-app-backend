@@ -40,7 +40,7 @@ final class OrderController extends Controller
         $status = $validated['status'] ?? null;
 
         $query = Order::query()
-            ->with(['driver.driverProfile'])
+            ->with(['driver.driverProfile', 'returnOffice', 'officeInventory'])
             ->where(function ($query) use ($user, $role): void {
                 if ($role === 'sent') {
                     $query->where('sender_user_id', $user->id);
@@ -75,6 +75,6 @@ final class OrderController extends Controller
     {
         $this->authorize('view', $order);
 
-        return new OrderResource($order->load(['driver.driverProfile']));
+        return new OrderResource($order->load(['driver.driverProfile', 'returnOffice', 'officeInventory']));
     }
 }
