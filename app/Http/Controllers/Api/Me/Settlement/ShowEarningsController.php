@@ -24,7 +24,6 @@ final class ShowEarningsController extends Controller
             ->get();
 
         return new SellerEarningsSummaryResource([
-            'seller_id' => $user->id,
             'earnings' => $earnings,
         ]);
     }

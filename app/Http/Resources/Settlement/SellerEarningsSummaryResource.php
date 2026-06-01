@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
 
-/** @property array{seller_id: int, earnings: Collection<int, SellerEarning>} $resource */
+/** @property array{earnings: Collection<int, SellerEarning>} $resource */
 final class SellerEarningsSummaryResource extends JsonResource
 {
     public function toArray(Request $request): array
