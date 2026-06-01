@@ -21,7 +21,7 @@ final class ListSettlementsController extends Controller
             $driverId = User::query()->where('public_id', $driverPublicId)->value('id');
             $query->where('driver_id', $driverId ?? -1);
         }
-        if ($officeId = $request->input('office_id')) {
+        if ($officeId = $request->officeId()) {
             $query->where('office_id', $officeId);
         }
         if ($status = $request->input('status')) {

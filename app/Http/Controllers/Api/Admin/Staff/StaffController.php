@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\Admin\Staff;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Staff\CreateStaffRequest;
+use App\Http\Requests\Staff\IndexStaffRequest;
 use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\Staff\StaffResource;
 use App\Models\User;
@@ -20,7 +21,7 @@ final class StaffController extends Controller
 
     public function __construct(private readonly StaffService $staff) {}
 
-    public function index(): AnonymousResourceCollection
+    public function index(IndexStaffRequest $request): AnonymousResourceCollection
     {
         $this->authorize('viewAny', User::class);
 
@@ -28,19 +29,19 @@ final class StaffController extends Controller
             ->whereHas('roles', fn ($q) => $q->whereIn('name', ['admin', 'office_staff']))
             ->with(['roles', 'activeOfficeAssignments.office']);
 
-        if ($role = request('role')) {
+        if ($role = $request->input('role')) {
             $query->whereHas('roles', fn ($q) => $q->where('name', $role));
         }
 
-        if ($status = request('account_status')) {
+        if ($status = $request->input('account_status')) {
             $query->where('account_status', $status);
         }
 
-        if ($officeId = request('office_id')) {
+        if ($officeId = $request->officeId()) {
             $query->whereHas('activeOfficeAssignments', fn ($q) => $q->where('office_id', $officeId));
         }
 
-        return StaffResource::collection($query->paginate((int) request('per_page', 20)));
+        return StaffResource::collection($query->paginate((int) $request->input('per_page', 20)));
     }
 
     public function show(User $staff): StaffResource

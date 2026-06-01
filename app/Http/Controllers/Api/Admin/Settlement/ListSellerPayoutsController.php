@@ -21,7 +21,7 @@ final class ListSellerPayoutsController extends Controller
             $sellerId = User::query()->where('public_id', $sellerPublicId)->value('id');
             $query->where('user_id', $sellerId ?? -1);
         }
-        if ($officeId = $request->input('office_id')) {
+        if ($officeId = $request->officeId()) {
             $query->where('office_id', $officeId);
         }
         if ($from = $request->input('from')) {
