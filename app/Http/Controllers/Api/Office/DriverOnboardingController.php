@@ -34,6 +34,7 @@ final class DriverOnboardingController extends Controller
         $defaultStatuses = ['pre_registered', 'pending_approval'];
 
         $query = DriverProfile::query()
+            ->with(DriverProfileResource::RELATIONS)
             ->where('office_id', $officeId)
             ->when(
                 $statusFilter !== null,
@@ -67,7 +68,7 @@ final class DriverOnboardingController extends Controller
             'user_exists' => $result['user_exists'],
             'user_phone_verified' => $result['user_phone_verified'],
             'driver_profile' => $result['driver_profile']
-                ? (new DriverProfileResource($result['driver_profile']))->resolve($request)
+                ? (new DriverProfileResource($result['driver_profile']->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request)
                 : null,
             'can_onboard' => $result['can_onboard'],
             'reason_if_not' => $result['reason_if_not'],
@@ -90,7 +91,7 @@ final class DriverOnboardingController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileResource($result['driver_profile']))->resolve($request),
+            'driver_profile' => (new DriverProfileResource($result['driver_profile']->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
             'otp_required' => $result['otp_required'],
             'otp_expires_at' => $result['otp_expires_at']?->toIso8601String(),
         ], 201);
@@ -170,7 +171,7 @@ final class DriverOnboardingController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileResource($result['driver_profile']))->resolve($request),
+            'driver_profile' => (new DriverProfileResource($result['driver_profile']->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
         ]);
     }
 

@@ -18,11 +18,13 @@ final class RetrieveOrderController extends Controller
     {
         $this->authorize('retrieveByOffice', $order);
 
-        return new OfficeOrderResource($this->failures->retrieve(
+        $order = $this->failures->retrieve(
             staff: $request->user(),
             order: $order,
             cashCollected: $request->normalizedCashCollected(),
             notes: is_string($request->input('notes')) ? $request->input('notes') : null,
-        ));
+        );
+
+        return new OfficeOrderResource($order->loadMissing(OfficeOrderResource::RELATIONS));
     }
 }

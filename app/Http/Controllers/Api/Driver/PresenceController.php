@@ -17,21 +17,27 @@ final class PresenceController extends Controller
 
     public function goOnline(DriverGoOnlineRequest $request): DriverProfileResource
     {
-        return new DriverProfileResource($this->presence->goOnline($request->user(), $request->validated()));
+        $profile = $this->presence->goOnline($request->user(), $request->validated());
+
+        return new DriverProfileResource($profile->loadMissing(DriverProfileResource::RELATIONS));
     }
 
     public function goOffline(DriverGoOfflineRequest $request): DriverProfileResource
     {
         $validated = $request->validated();
 
-        return new DriverProfileResource($this->presence->goOffline(
+        $profile = $this->presence->goOffline(
             $request->user(),
             isset($validated['reason']) ? (string) $validated['reason'] : null,
-        ));
+        );
+
+        return new DriverProfileResource($profile->loadMissing(DriverProfileResource::RELATIONS));
     }
 
     public function location(DriverLocationUpdateRequest $request): DriverProfileResource
     {
-        return new DriverProfileResource($this->presence->updateLocation($request->user(), $request->validated()));
+        $profile = $this->presence->updateLocation($request->user(), $request->validated());
+
+        return new DriverProfileResource($profile->loadMissing(DriverProfileResource::RELATIONS));
     }
 }

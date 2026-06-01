@@ -27,7 +27,7 @@ final class DriverController extends Controller
     public function index(IndexDriverRequest $request): AnonymousResourceCollection
     {
         $query = DriverProfile::query()
-            ->with(['user', 'office'])
+            ->with(DriverProfileResource::RELATIONS)
             ->when($request->input('status'), fn ($q, $s) => $q->where('status', (string) $s))
             ->when($request->officeId(), fn ($q, $id) => $q->where('office_id', $id))
             ->orderByRaw("CASE status WHEN 'pending_approval' THEN 0 ELSE 1 END")
@@ -48,7 +48,7 @@ final class DriverController extends Controller
         $driverProfile = $driverUser->driverProfile;
         abort_unless($driverProfile !== null, 404);
 
-        $driverProfile->load(['user', 'office', 'approvedBy', 'documents.driver.media']);
+        $driverProfile->loadMissing(DriverProfileFullResource::RELATIONS);
 
         return response()->json([
             'driver_profile' => (new DriverProfileFullResource($driverProfile))->resolve($request),
@@ -72,7 +72,7 @@ final class DriverController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileFullResource($result))->resolve($request),
+            'driver_profile' => (new DriverProfileFullResource($result->loadMissing(DriverProfileFullResource::RELATIONS)))->resolve($request),
         ]);
     }
 
@@ -110,7 +110,7 @@ final class DriverController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileResource($result))->resolve($request),
+            'driver_profile' => (new DriverProfileResource($result->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
         ]);
     }
 }

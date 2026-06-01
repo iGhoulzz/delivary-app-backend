@@ -11,6 +11,14 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /** @mixin DriverProfile */
 final class DriverProfileFullResource extends JsonResource
 {
+    /**
+     * Relations read by toArray(). Callers must loadMissing() these before
+     * resolving so nested public ids are never emitted as null.
+     *
+     * @var array<int, string>
+     */
+    public const RELATIONS = ['user', 'office', 'approvedBy', 'documents.driver.media'];
+
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {

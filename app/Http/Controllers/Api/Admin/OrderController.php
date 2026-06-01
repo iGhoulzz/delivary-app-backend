@@ -33,7 +33,7 @@ final class OrderController extends Controller
     public function index(AdminListOrdersRequest $request): AnonymousResourceCollection
     {
         $validated = $request->validated();
-        $query = Order::query()->with(['sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice']);
+        $query = Order::query()->with(AdminOrderResource::RELATIONS);
 
         if (isset($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -51,24 +51,26 @@ final class OrderController extends Controller
 
     public function show(Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($order->load(['sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice', 'statusLogs.actor']));
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 
     public function assign(AdminAssignOrderRequest $request, Order $order): AdminOrderResource
     {
         $driver = User::query()->findOrFail($request->driverUserId());
 
-        return new AdminOrderResource($this->assignments->assign(
+        $order = $this->assignments->assign(
             $request->user(),
             $order,
             $driver,
             $request->boolean('force'),
-        ));
+        );
+
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 
     public function unassign(AdminUnassignOrderRequest $request, Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($this->assignments->unassign(
+        $order = $this->assignments->unassign(
             $request->user(),
             $order,
             is_string($request->input('reason')) ? $request->input('reason') : null,
@@ -76,47 +78,57 @@ final class OrderController extends Controller
             $request->boolean('driver_fault'),
             is_string($request->input('notes')) ? $request->input('notes') : null,
             $request->filled('fee_amount_override') ? (string) $request->input('fee_amount_override') : null,
-        ));
+        );
+
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 
     public function cancel(AdminCancelOrderRequest $request, Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($this->cancellations->cancelByAdmin(
+        $order = $this->cancellations->cancelByAdmin(
             $request->user(),
             $order,
             is_string($request->input('reason')) ? $request->input('reason') : null,
-        ));
+        );
+
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 
     public function markDeliveryFailed(AdminMarkDeliveryFailedRequest $request, Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($this->failures->markDeliveryFailedByAdmin(
+        $order = $this->failures->markDeliveryFailedByAdmin(
             admin: $request->user(),
             order: $order,
             reason: ReturnReason::from((string) $request->input('reason')),
             notes: is_string($request->input('notes')) ? $request->input('notes') : null,
-        )->load(['statusLogs.actor', 'driver.driverProfile']));
+        );
+
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 
     public function redirectReturn(RedirectReturnRequest $request, Order $order): AdminOrderResource
     {
         $office = OfficeLocation::query()->findOrFail($request->officeId());
 
-        return new AdminOrderResource($this->failures->redirectReturn(
+        $order = $this->failures->redirectReturn(
             admin: $request->user(),
             order: $order,
             office: $office,
             reason: is_string($request->input('reason')) ? $request->input('reason') : null,
-        )->load(['statusLogs.actor']));
+        );
+
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 
     public function waiveRetrievalFees(WaiveRetrievalFeesRequest $request, Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($this->failures->waiveRetrievalFees(
+        $order = $this->failures->waiveRetrievalFees(
             admin: $request->user(),
             order: $order,
             amount: (string) $request->input('amount'),
             reason: is_string($request->input('reason')) ? $request->input('reason') : null,
-        )->load(['officeInventory', 'statusLogs.actor']));
+        );
+
+        return new AdminOrderResource($order->loadMissing(AdminOrderResource::RELATIONS));
     }
 }

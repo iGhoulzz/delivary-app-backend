@@ -10,6 +10,22 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 final class AdminOrderResource extends JsonResource
 {
+    /**
+     * Relations read by toArray(). Callers must loadMissing() these before
+     * resolving so nested public ids are never emitted as null.
+     * (officeInventory is intentionally absent — this resource does not render it.)
+     *
+     * @var array<int, string>
+     */
+    public const RELATIONS = [
+        'sender',
+        'receiverUser',
+        'receiverGuest',
+        'driver.driverProfile',
+        'returnOffice',
+        'statusLogs.actor',
+    ];
+
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {

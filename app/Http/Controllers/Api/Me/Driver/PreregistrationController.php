@@ -34,7 +34,7 @@ final class PreregistrationController extends Controller
         }
 
         return response()->json([
-            'driver_profile' => (new DriverProfileResource($result))->resolve($request),
+            'driver_profile' => (new DriverProfileResource($result->loadMissing(DriverProfileResource::RELATIONS)))->resolve($request),
         ], Response::HTTP_CREATED);
     }
 }

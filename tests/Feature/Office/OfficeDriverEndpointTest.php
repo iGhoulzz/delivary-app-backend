@@ -77,6 +77,20 @@ it('rejects an office staff not assigned to the drivers office with WRONG_OFFICE
     expect($response->json('error'))->toBe(DriverErrorCode::WrongOffice->value);
 });
 
+it('office drivers index carries the nested office public id (not null)', function (): void {
+    $office = makeOfficeForDriverTest();
+
+    $profile = makeOfficeDriverProfile($office);
+    $staff = makeOfficeStaff($office);
+    Sanctum::actingAs($staff);
+
+    $row = $this->getJson('/api/office/drivers')->assertOk()->json('data.0');
+
+    expect(data_get($row, 'office.id'))->not->toBeNull()
+        ->and(data_get($row, 'office.id'))->toBe($office->public_id)
+        ->and(data_get($row, 'user.id'))->toBe($profile->user->public_id);
+});
+
 it('deletes a driver document by scoped type when assigned', function (): void {
     $office = makeOfficeForDriverTest();
 
