@@ -43,6 +43,18 @@ final class OrderController extends Controller
     {
         $this->authorize('viewByOffice', $order);
 
-        return new OfficeOrderResource($order->load(['officeInventory', 'sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice', 'statusLogs.actor']));
+        return new OfficeOrderResource($order->load([
+            'officeInventory',
+            'officeInventory.office',
+            'officeInventory.receivedByStaff',
+            'officeInventory.retrievedByStaff',
+            'officeInventory.abandonedByAdmin',
+            'sender',
+            'receiverUser',
+            'receiverGuest',
+            'driver.driverProfile',
+            'returnOffice',
+            'statusLogs.actor',
+        ]));
     }
 }

@@ -19,8 +19,13 @@ final class OfficeInventoryResource extends JsonResource
 
         return [
             'id' => $inventory->public_id,
-            'office_id' => $inventory->office_id,
-            'received_by_staff_id' => $inventory->received_by_staff_id,
+            'office' => [
+                'id' => $inventory->office?->public_id,
+                'name' => $inventory->office?->name,
+            ],
+            'received_by' => $inventory->receivedByStaff
+                ? ['id' => $inventory->receivedByStaff->public_id, 'name' => $inventory->receivedByStaff->fullName()]
+                : null,
             'received_at' => $inventory->received_at?->toIso8601String(),
             'shelf_location' => $inventory->shelf_location,
             'accrued_storage_fee_snapshot' => (string) $inventory->accrued_storage_fee,
@@ -30,9 +35,13 @@ final class OfficeInventoryResource extends JsonResource
             'retrieval_fees_waived_amount' => (string) $inventory->retrieval_fees_waived_amount,
             'cash_collected_at_retrieval' => (string) $inventory->cash_collected_at_retrieval,
             'retrieved_at' => $inventory->retrieved_at?->toIso8601String(),
-            'retrieved_by_staff_id' => $inventory->retrieved_by_staff_id,
+            'retrieved_by' => $inventory->retrievedByStaff
+                ? ['id' => $inventory->retrievedByStaff->public_id, 'name' => $inventory->retrievedByStaff->fullName()]
+                : null,
             'abandoned_at' => $inventory->abandoned_at?->toIso8601String(),
-            'abandoned_by_admin_id' => $inventory->abandoned_by_admin_id,
+            'abandoned_by' => $inventory->abandonedByAdmin
+                ? ['id' => $inventory->abandonedByAdmin->public_id, 'name' => $inventory->abandonedByAdmin->fullName()]
+                : null,
             'disposal_notes' => $inventory->disposal_notes,
             'notes' => $inventory->notes,
         ];
