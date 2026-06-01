@@ -54,9 +54,19 @@ final class OrderStatusLogMetadata
     ];
 
     /**
-     * Read-time guard: keep allowlisted keys; drop everything else, and
-     * defensively drop ANY remaining key ending in `_id` (fail-closed) so a
-     * future writer cannot silently leak an internal id. No DB queries.
+     * Read-time guard, applied recursively and fail-closed. Rules at EVERY depth:
+     *
+     *  1. Drop any key ending in `_id` unless it ends in `_public_id`
+     *     (defensive: a future writer cannot silently leak an internal id,
+     *     even nested inside a sub-array).
+     *  2. For `*_public_id` keys, keep the value only if it is a string or null;
+     *     drop non-string values (public ids are ULID-shaped strings).
+     *  3. Recurse into nested arrays, applying rules 1–4 to each level.
+     *  4. At the TOP level ONLY, additionally require the key be in ALLOWLIST.
+     *     Sub-keys are not allowlisted (we have no per-context sub-key list);
+     *     the `_id` guard is what protects nested structures.
+     *
+     * No DB queries.
      *
      * @param  array<string, mixed>|null  $metadata
      * @return array<string, mixed>
@@ -67,13 +77,30 @@ final class OrderStatusLogMetadata
             return [];
         }
 
+        return self::sanitizeLevel($metadata, true);
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $data
+     * @return array<array-key, mixed>
+     */
+    private static function sanitizeLevel(array $data, bool $topLevel): array
+    {
         $clean = [];
-        foreach ($metadata as $key => $value) {
-            if (! in_array($key, self::ALLOWLIST, true)) {
+        foreach ($data as $key => $value) {
+            if ($topLevel && is_string($key) && ! in_array($key, self::ALLOWLIST, true)) {
                 continue;
             }
-            if (str_ends_with($key, '_id') && ! str_ends_with($key, '_public_id')) {
-                continue; // fail-closed on internal-id-shaped keys
+            if (is_string($key) && str_ends_with($key, '_id') && ! str_ends_with($key, '_public_id')) {
+                continue; // fail-closed on internal-id-shaped keys at any depth
+            }
+            if (is_string($key) && str_ends_with($key, '_public_id') && $value !== null && ! is_string($value)) {
+                continue; // public ids are string|null; drop anything else
+            }
+            if (is_array($value)) {
+                $clean[$key] = self::sanitizeLevel($value, false);
+
+                continue;
             }
             $clean[$key] = $value;
         }

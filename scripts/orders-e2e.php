@@ -378,7 +378,8 @@ try {
     $redirected = app(FailedDeliveryService::class)->redirectReturn($admin, $redirectOrder, $alternateOffice, 'E2E redirect');
     $redirectLog = $redirected->statusLogs()->latest('id')->first();
     $assert($redirected->status === OrderStatus::ReturningToOffice && $redirected->return_office_id === $alternateOffice->id, 'admin redirect changes office without status change');
-    $assert($redirectLog?->metadata['event'] === 'return_office_redirected', 'redirect-return writes audit metadata');
+    $redirectMeta = $redirectLog?->metadata ?? [];
+    $assert(($redirectMeta['event'] ?? null) === 'return_office_redirected', 'redirect-return writes audit metadata');
     $redirected->forceFill(['return_office_id' => $office->id])->save();
     app(FailedDeliveryService::class)->receiveReturn($officeStaff, $redirected);
 

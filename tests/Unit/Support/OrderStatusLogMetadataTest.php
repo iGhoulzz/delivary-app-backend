@@ -62,3 +62,28 @@ it('fails closed: a non-allowlisted internal-id-shaped key is dropped', function
 
     expect($clean)->toBe(['event' => 'order_cancelled']);
 });
+
+it('recursively drops internal-id-shaped keys inside nested arrays', function (): void {
+    $clean = OrderStatusLogMetadata::sanitize([
+        'event' => ['driver_id' => 1, 'note' => 'x'],
+        'previous_office_public_id' => '01ABC',
+    ]);
+
+    expect($clean)->toBe([
+        'event' => ['note' => 'x'],
+        'previous_office_public_id' => '01ABC',
+    ]);
+});
+
+it('drops non-string *_public_id values defensively', function (): void {
+    $clean = OrderStatusLogMetadata::sanitize([
+        'driver_public_id' => 123,         // non-string — dropped
+        'cancelled_by_public_id' => null,  // null allowed
+        'new_office_public_id' => '01NEW', // string kept
+    ]);
+
+    expect($clean)->toBe([
+        'cancelled_by_public_id' => null,
+        'new_office_public_id' => '01NEW',
+    ]);
+});
