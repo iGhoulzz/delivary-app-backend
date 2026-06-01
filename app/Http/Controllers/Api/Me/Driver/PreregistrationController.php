@@ -21,7 +21,10 @@ final class PreregistrationController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-        $result = $this->service->preregister($user, $request->validated());
+        $result = $this->service->preregister($user, [
+            ...$request->validated(),
+            'office_id' => $request->officeId(),
+        ]);
 
         if ($result instanceof DriverErrorCode) {
             return response()->json([

@@ -56,7 +56,7 @@ final class OrderController extends Controller
 
     public function assign(AdminAssignOrderRequest $request, Order $order): AdminOrderResource
     {
-        $driver = User::query()->findOrFail($request->integer('driver_id'));
+        $driver = User::query()->findOrFail($request->driverUserId());
 
         return new AdminOrderResource($this->assignments->assign(
             $request->user(),
@@ -100,7 +100,7 @@ final class OrderController extends Controller
 
     public function redirectReturn(RedirectReturnRequest $request, Order $order): AdminOrderResource
     {
-        $office = OfficeLocation::query()->findOrFail((int) $request->input('office_id'));
+        $office = OfficeLocation::query()->findOrFail($request->officeId());
 
         return new AdminOrderResource($this->failures->redirectReturn(
             admin: $request->user(),
