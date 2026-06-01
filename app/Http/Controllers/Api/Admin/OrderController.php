@@ -51,7 +51,7 @@ final class OrderController extends Controller
 
     public function show(Order $order): AdminOrderResource
     {
-        return new AdminOrderResource($order->load(['sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice', 'statusLogs']));
+        return new AdminOrderResource($order->load(['sender', 'receiverUser', 'receiverGuest', 'driver.driverProfile', 'returnOffice', 'statusLogs.actor']));
     }
 
     public function assign(AdminAssignOrderRequest $request, Order $order): AdminOrderResource
@@ -95,7 +95,7 @@ final class OrderController extends Controller
             order: $order,
             reason: ReturnReason::from((string) $request->input('reason')),
             notes: is_string($request->input('notes')) ? $request->input('notes') : null,
-        )->load(['statusLogs', 'driver.driverProfile']));
+        )->load(['statusLogs.actor', 'driver.driverProfile']));
     }
 
     public function redirectReturn(RedirectReturnRequest $request, Order $order): AdminOrderResource
@@ -107,7 +107,7 @@ final class OrderController extends Controller
             order: $order,
             office: $office,
             reason: is_string($request->input('reason')) ? $request->input('reason') : null,
-        )->load(['statusLogs']));
+        )->load(['statusLogs.actor']));
     }
 
     public function waiveRetrievalFees(WaiveRetrievalFeesRequest $request, Order $order): AdminOrderResource
@@ -117,6 +117,6 @@ final class OrderController extends Controller
             order: $order,
             amount: (string) $request->input('amount'),
             reason: is_string($request->input('reason')) ? $request->input('reason') : null,
-        )->load(['officeInventory', 'statusLogs']));
+        )->load(['officeInventory', 'statusLogs.actor']));
     }
 }
