@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Driver;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\Driver\DriverAccountTransactionResource;
 use App\Http\Resources\DriverAccountResource;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -23,11 +24,11 @@ final class AccountController extends Controller
         $transactions = $user->driverAccountTransactions()
             ->latest()
             ->limit(30)
-            ->get(['id', 'bucket', 'amount', 'reason', 'balance_after', 'created_at']);
+            ->get();
 
         return response()->json([
             'account' => (new DriverAccountResource($account))->resolve($request),
-            'transactions' => $transactions,
+            'transactions' => DriverAccountTransactionResource::collection($transactions)->resolve($request),
         ]);
     }
 }
