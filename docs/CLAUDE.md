@@ -295,8 +295,8 @@ Driver::join('driver_profiles', ...)
 
 ## Current Project State
 
-**Last updated:** 2026-05-31
-**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B).** Cash loop closed end-to-end; admin staff account management live. Real-time is next.
+**Last updated:** 2026-06-02
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels. Account moderation is next.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -477,12 +477,30 @@ Driver::join('driver_profiles', ...)
 
 **Smoke test:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios). Merged-main verification: Pest 92/92, staff-e2e + orders-e2e (32/32) green.
 
+### Real-time (Reverb) milestone (2026-06-02) ✅
+
+WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` (Phase 1 foundation + Phase 2 events merged earlier; Phase 3 smoke + docs this close-out). Full detail in SYSTEM_SPECIFICATION §17.13.
+
+**Transport:** Reverb (port 8080) ↔ Laravel via Redis pub/sub. Business events `ShouldBroadcast` on the `broadcasts` queue with `$afterCommit = true`; driver location is `ShouldBroadcastNow` (queue-bypassing, ephemeral). **Driver app stays HTTP-only** — server fans out `POST /api/driver/location`. Channel auth is Sanctum-on-`/broadcasting/auth` (`routes/channels.php`).
+
+**Channels:** `private:user.{id}`, `private:order.{public_id}` (sender/receiver, resolved by public_id), `private:driver.{id}`, `public:track.{token}`.
+
+**9 events:** `OrderBroadcastToDriver` / `OrderBroadcastWithdrawn` (driver pool), `OrderStatusChanged` + `OrderStatusChangedPublic`, `OrderDriverAssigned`, `OrderDriverLocationUpdated`, `DriverAccountUpdated`, `NotificationReceived`, `SellerEarningCleared`.
+
+**Broadcast-safe Resources (mandatory pattern):** queued broadcasts run off the HTTP request, so never broadcast `OrderResource`/`DriverProfileResource` (they branch on `$request->user()`). Use request-independent `App\Http\Resources\Broadcast\OrderForPartiesResource` + `DriverForOrderResource` (audience-neutral, strip phone/name/codes/commission/plate/internal-ids); reuse `GuestTrackingResource` + `BroadcastOrderResource`.
+
+**Ops:** `composer dev` runs Reverb + `broadcasts` worker; `docs/deployment/reverb-supervisor.conf.example` for prod.
+
+**Smoke:** `scripts/realtime-smoke.php` (recording broadcaster, real lifecycle, asserts event sequence + channels + payload safety; commits-then-cleans, no rollback because `$afterCommit` events only fire post-commit). Verified: Pest 133/133, orders-e2e 32/32, realtime-smoke green.
+
+**Known gaps:** (1) no `notifications` table exists — `NotificationReceived` is wired but dormant until a migration is added (smoke skips it); (2) `user.{id}`/`driver.{id}` channels still authorise on internal id, not `public_id` — deferred holistic rename from the id-exposure spec §10.
+
 ### Next Steps (in order)
-1. **Real-time** — Reverb channels for driver location + order status (layers onto existing `OrderStatusChanged` event zero-touch).
-2. **Account moderation** — global ban/suspend with reason history (builds on the staff suspend/reinstate + `AccountStatus` foundation; adds a staff-action audit table deferred from this milestone).
-3. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
-4. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
-5. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
+1. **Account moderation** — global ban/suspend with reason history (builds on the staff suspend/reinstate + `AccountStatus` foundation; adds a staff-action audit table deferred from this milestone).
+2. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
+3. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
+4. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
+5. **Channel public_id rename + `notifications` table** — deferred items from the Real-time milestone (see §17.13 known gaps).
 
 ### Open Questions
 - Storage fee policy specifics (flat daily after grace period? Tiered?)
