@@ -1202,7 +1202,21 @@ Admin creates an internal account (`admin` or `office_staff`); the system genera
 
 **E2E smoke verified:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios: forced-change, office_staff with 2 offices, reset-temp, suspend-preserves-assignments, reinstate-then-deactivate-removes, self-modify + last-admin guards). Full suite green on merged main: Pest 92/92, staff-e2e + orders-e2e (32/32) passing.
 
-### 17.13 Real-time (Reverb) milestone (2026-05-18 → 2026-06-02) ✅
+### 17.13 Internal-ID exposure remediation (2026-05-31 → merged 2026-06-02, PR #5) ✅
+
+Hardened the API against Critical Rule 11 (never expose internal auto-increment `id`). Built per `docs/superpowers/specs/2026-05-31-id-exposure-remediation-design.md` + plan; split Claude/Codex with two Codex review rounds.
+
+**Scope:** drivers are addressed by their existing `User.public_id` (no new ULID column added); every outbound foreign-key id is rendered as a nested `{id, name}` object carrying the related record's `public_id` (e.g. order resources expose `return_office`, `driver`, status-log `actor` as nested public ids — never raw `office_id`/`driver_id`/`actor_id`). Inbound, a `*_public_id` contract was applied across ~9 endpoints (driver onboarding/preregister, admin assign/redirect, office filters, staff create + office-assignment, etc.), resolved to internal ids by a single `App\Support\Resolvers\PublicIdResolver`.
+
+**Status-log metadata:** write-time `*_public_id` summaries are stored in `order_status_logs.metadata`, sanitized by a fail-closed flat sanitizer (`App\Support\OrderStatusLogMetadata`) that rejects nested arrays so an internal id can never leak through a log payload.
+
+**Pattern introduced:** each guarded `JsonResource` declares a `const RELATIONS` (and `AdminOrderResource::LIST_RELATIONS` for index); callers `loadMissing(Resource::RELATIONS)` so nested public ids are never null and there is no N+1.
+
+**Documented exemption:** `regions` and `service_areas` intentionally have **no** `public_id` — stable, non-sensitive geographic reference data; exposing/accepting their numeric `id` is an accepted exception (also recorded in CLAUDE.md Key Conventions).
+
+**Verified green at merge:** Pest 133, orders-e2e 32/32, staff-e2e, Pint clean.
+
+### 17.14 Real-time (Reverb) milestone (2026-05-18 → 2026-06-03) ✅
 
 Replaces client polling with WebSocket push. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` in three phases: **Phase 1** (Claude — Reverb foundation, channel auth, broadcast-safe Resources, the two driver-pool events), **Phase 2** (per-event broadcasts across the order/driver/user surface), **Phase 3** (Claude — integration smoke + docs, this close-out). Backend-only: this milestone ships the API + event contracts; mobile/web clients subscribe later.
 
