@@ -32,7 +32,7 @@ final class BroadcastWithdrawnOnExit
         foreach ($this->broadcasts->eligibleDriversFor($event->order) as $profile) {
             event(new OrderBroadcastWithdrawn(
                 orderPublicId: $event->order->public_id,
-                driverId: (int) $profile->user_id,
+                driverPublicId: $profile->user->public_id,
                 reason: $reason,
             ));
         }

@@ -256,7 +256,7 @@ try {
     $reset();
     app(EscalationService::class)->process($order->refresh());
     $assert(count($recordsFor('order.broadcast_to_driver')) >= 1, 'tier escalation broadcasts order to driver');
-    $assert(in_array('private-driver.'.$driver->id, $channelsFor('order.broadcast_to_driver'), true),
+    $assert(in_array('private-driver.'.$driver->public_id, $channelsFor('order.broadcast_to_driver'), true),
         'broadcast_to_driver targets the eligible driver private channel');
 
     // ── Scenario 2: claim drives status + withdrawal + driver-assigned ──────
@@ -267,7 +267,7 @@ try {
     $token = $order->tracking_token;
 
     $assert($order->status === OrderStatus::DriverEnRoutePickup, 'claim moves order to en_route_pickup');
-    $assert(in_array('private-driver.'.$bystander->id, $channelsFor('order.broadcast_withdrawn'), true),
+    $assert(in_array('private-driver.'.$bystander->public_id, $channelsFor('order.broadcast_withdrawn'), true),
         'claim withdraws the order from the other pool drivers');
     $assert(in_array('private-order.'.$publicId, $channelsFor('order.status_changed'), true),
         'status_changed broadcasts on the private order channel (public_id)');
@@ -316,7 +316,7 @@ try {
     $reset();
     $order = app(CodeVerificationService::class)->confirmDelivery($driver, $order->refresh(), $order->delivery_code);
     $assert($order->status === OrderStatus::Delivered, 'order delivered');
-    $assert(in_array('private-driver.'.$driver->id, $channelsFor('driver.account_updated'), true),
+    $assert(in_array('private-driver.'.$driver->public_id, $channelsFor('driver.account_updated'), true),
         'earnings credit broadcasts driver.account_updated on the driver channel');
 
     // ── Scenario 5: database notification fans out to the user channel ──────
@@ -345,7 +345,7 @@ try {
                 return ['message' => 'realtime smoke notification'];
             }
         });
-        $assert(in_array('private-user.'.$sender->id, $channelsFor('notification.received'), true),
+        $assert(in_array('private-user.'.$sender->public_id, $channelsFor('notification.received'), true),
             'database notification broadcasts on the user private channel');
     }
 
@@ -394,7 +394,7 @@ try {
     (new ClearSellerEarningsJob)->handle();
     $earning->refresh();
     $assert($earning->status === SellerEarningStatus::Available, 'clearance job promotes earning to available');
-    $assert(in_array('private-user.'.$sender->id, $channelsFor('seller.earning_cleared'), true),
+    $assert(in_array('private-user.'.$sender->public_id, $channelsFor('seller.earning_cleared'), true),
         'clearance broadcasts seller.earning_cleared on the seller user channel');
 
     echo "ALL REALTIME SMOKE SCENARIOS PASSED\n";

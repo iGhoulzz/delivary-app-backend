@@ -729,10 +729,10 @@ orders:
 
 **Reverb Channels:**
 ```
-private:user.{user_id}        → user receives own updates
-private:order.{order_id}      → sender + receiver subscribe
-private:driver.{driver_id}    → driver broadcasts and status
-public:track.{tracking_token} → guest receivers (web page)
+private:user.{public_id}       → user receives own updates
+private:order.{public_id}      → sender + receiver subscribe
+private:driver.{public_id}     → driver broadcasts and status (User public_id)
+public:track.{tracking_token}  → guest receivers (web page)
 ```
 
 ### 13.6 In-App Notification Center
@@ -1209,9 +1209,10 @@ Replaces client polling with WebSocket push. Built per `docs/superpowers/specs/2
 **Transport:** Laravel Reverb runs as a separate WS process (`reverb:start`, port 8080) talking to Laravel over Redis pub/sub. Business events are queued (`ShouldBroadcast`, `broadcasts` queue, `$afterCommit = true`); driver location is `ShouldBroadcastNow` and bypasses the queue (ephemeral — the next ping supersedes a lost one). The **driver app stays HTTP-only** — it keeps posting to `POST /api/driver/location`; the server fans that out. Cellular networks drop persistent sockets, so HTTP-up + WS-down is the deliberate design (industry standard for ride-hail/delivery).
 
 **Channel auth:** Sanctum bearer token on `/broadcasting/auth` (Reverb never sees the token). Callbacks in `routes/channels.php`:
-- `private:user.{userId}` — `$user->id === (int) $userId`
-- `private:order.{orderPublicId}` — sender OR registered receiver, resolved by **`public_id`** (Critical Rule 11 — never internal id in channel names)
-- `private:driver.{driverId}` — that driver only, `&& hasRole('driver')`
+All four channels key on **`public_id`**, never internal id (Critical Rule 11 — a public-id-only client has no way to learn its internal id anyway):
+- `private:user.{userPublicId}` — `$user->public_id === $userPublicId`
+- `private:order.{orderPublicId}` — sender OR registered receiver, resolved by `public_id`
+- `private:driver.{driverPublicId}` — that driver's User `public_id`, `&& hasRole('driver')`
 - `public:track.{trackingToken}` — public (26-char ULID, unguessable)
 
 **Events catalog (9):** `OrderBroadcastToDriver` / `OrderBroadcastWithdrawn` (driver pool fan-out + withdrawal, Phase 1) on `private:driver.{id}`; `OrderStatusChanged` (private order) paired with `OrderStatusChangedPublic` (public tracking); `OrderDriverAssigned` (order + tracking); `OrderDriverLocationUpdated` (`ShouldBroadcastNow`, order + tracking); `DriverAccountUpdated` (`private:driver.{id}`); `NotificationReceived` (`private:user.{id}`); `SellerEarningCleared` (`private:user.{seller}`).
@@ -1226,8 +1227,9 @@ Replaces client polling with WebSocket push. Built per `docs/superpowers/specs/2
 
 **Integration smoke verified:** new `scripts/realtime-smoke.php` swaps in an in-process recording broadcaster and drives a real order lifecycle end-to-end, asserting the exact broadcast sequence, channel names, and that each `broadcastWith()` payload serialises safely off-request (e.g. the order payload hides receiver phone/name/commission; the driver payload hides plate/internal ids). 6 scenarios incl. the live database-notification path; commits-then-cleans (no rollback harness — `$afterCommit` events only fire post-commit). Full suite green: **Pest 133/133, orders-e2e 32/32, realtime-smoke all scenarios.**
 
+**Channel public-ID hardening (2026-06-03):** the `user` and `driver` channels were migrated from internal id to `public_id` to satisfy Critical Rule 11 and the id-exposure spec §10 (the order/tracking channels already used public identifiers). Touched `routes/channels.php` (callbacks resolve/compare `public_id`) and every emission site: `OrderBroadcastToDriver`, `OrderBroadcastWithdrawn`, `NotificationReceived` now carry a `*PublicId` string; `DriverAccountUpdated` / `SellerEarningCleared` resolve the owner's `public_id` via their relation in `broadcastOn()`; dispatch sites (`StateTransitionService`, `EscalationService`, `BroadcastWithdrawnOnExit`, `BroadcastDatabaseNotification`) pass `public_id`. Done TDD; channel-auth + event + dispatch tests updated to assert public_id channel names.
+
 **Known gaps / deferred:**
-- **Channel-name convention:** `private:user.{id}` and `private:driver.{id}` still authorise on **internal id** (as the realtime spec specified), whereas the id-exposure remediation (§10 of its spec) wanted them on `public_id` like the order channel. This holistic rename was deferred — it touches `routes/channels.php` plus every emission site (`new PrivateChannel('user.'.$id)` / `'driver.'.$id`) and is a candidate for a follow-up.
 - Out of scope (per spec §7): push notifications (FCM/APNs), admin/office dashboard channel, presence channels, VoIP phone masking, TLS cert provisioning for `ws.delivary.ly`.
 
 **End of Specification Document**

@@ -20,11 +20,13 @@ final class BroadcastDatabaseNotification
             return;
         }
 
-        $notifiableId = $event->notifiable->getKey();
-        if ($notifiableId === null) {
+        // Channel is keyed by the notifiable's public_id (Critical Rule 11),
+        // never the internal id. Skip notifiables without one.
+        $publicId = $event->notifiable->public_id ?? null;
+        if (! is_string($publicId) || $publicId === '') {
             return;
         }
 
-        event(new NotificationReceived((int) $notifiableId, $event->response));
+        event(new NotificationReceived($publicId, $event->response));
     }
 }

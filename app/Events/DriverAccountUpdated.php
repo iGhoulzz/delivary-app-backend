@@ -27,7 +27,11 @@ final class DriverAccountUpdated implements ShouldBroadcast
     /** @return array<int, PrivateChannel> */
     public function broadcastOn(): array
     {
-        return [new PrivateChannel('driver.'.$this->account->driver_id)];
+        // Channel is keyed by the driver's User public_id (Critical Rule 11),
+        // never the internal driver_id.
+        $publicId = $this->account->loadMissing('driver')->driver?->public_id;
+
+        return [new PrivateChannel('driver.'.$publicId)];
     }
 
     public function broadcastAs(): string

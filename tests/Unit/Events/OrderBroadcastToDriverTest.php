@@ -15,20 +15,20 @@ it('broadcasts to private driver channel', function (): void {
     $driver = User::factory()->create();
     $order = Order::factory()->create();
 
-    $event = new OrderBroadcastToDriver($order, $driver->id, tier: 1);
+    $event = new OrderBroadcastToDriver($order, $driver->public_id, tier: 1);
 
     $channels = $event->broadcastOn();
 
     expect($channels)->toHaveCount(1);
     expect($channels[0])->toBeInstanceOf(PrivateChannel::class);
-    expect($channels[0]->name)->toBe('private-driver.'.$driver->id);
+    expect($channels[0]->name)->toBe('private-driver.'.$driver->public_id);
 });
 
 it('has $afterCommit set to true', function (): void {
     $driver = User::factory()->create();
     $order = Order::factory()->create();
 
-    $event = new OrderBroadcastToDriver($order, $driver->id, tier: 1);
+    $event = new OrderBroadcastToDriver($order, $driver->public_id, tier: 1);
 
     expect($event->afterCommit)->toBeTrue();
 });
@@ -37,7 +37,7 @@ it('payload includes broadcast order resource and tier metadata', function (): v
     $driver = User::factory()->create();
     $order = Order::factory()->create(['search_radius_tier' => 2]);
 
-    $event = new OrderBroadcastToDriver($order, $driver->id, tier: 2);
+    $event = new OrderBroadcastToDriver($order, $driver->public_id, tier: 2);
     $payload = $event->broadcastWith();
 
     expect($payload)->toHaveKey('type', 'order.broadcast_to_driver');
@@ -57,7 +57,7 @@ it('expires_at is awaiting_driver_at + broadcast.no_driver_after_minutes', funct
         'awaiting_driver_at' => $startedAt,
     ]);
 
-    $payload = (new OrderBroadcastToDriver($order, $driver->id, tier: 1))->broadcastWith();
+    $payload = (new OrderBroadcastToDriver($order, $driver->public_id, tier: 1))->broadcastWith();
 
     expect($payload['expires_at'])->toBe(
         $startedAt->copy()->addMinutes(10)->toIso8601String(),
@@ -68,7 +68,7 @@ it('expires_at is null when awaiting_driver_at is null', function (): void {
     $driver = User::factory()->create();
     $order = Order::factory()->create(['awaiting_driver_at' => null]);
 
-    $payload = (new OrderBroadcastToDriver($order, $driver->id, tier: 1))->broadcastWith();
+    $payload = (new OrderBroadcastToDriver($order, $driver->public_id, tier: 1))->broadcastWith();
 
     expect($payload['expires_at'])->toBeNull();
 });

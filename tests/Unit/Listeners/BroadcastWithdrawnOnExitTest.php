@@ -39,8 +39,8 @@ it('fires withdrawn for each eligible driver when order leaves awaiting_driver',
         OrderActorType::User,
     ));
 
-    Event::assertDispatched(OrderBroadcastWithdrawn::class, fn ($e) => $e->driverId === $alice->id);
-    Event::assertDispatched(OrderBroadcastWithdrawn::class, fn ($e) => $e->driverId === $bob->id);
+    Event::assertDispatched(OrderBroadcastWithdrawn::class, fn ($e) => $e->driverPublicId === $alice->public_id);
+    Event::assertDispatched(OrderBroadcastWithdrawn::class, fn ($e) => $e->driverPublicId === $bob->public_id);
 });
 
 it('does nothing when from is not awaiting_driver', function (): void {

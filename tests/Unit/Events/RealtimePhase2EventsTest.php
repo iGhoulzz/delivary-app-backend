@@ -114,7 +114,7 @@ it('broadcasts driver account updates to the driver channel', function (): void 
 
     expect($event->afterCommit)->toBeTrue();
     expect($channels)->toHaveCount(1);
-    expect($channels[0]->name)->toBe('private-driver.'.$driver->id);
+    expect($channels[0]->name)->toBe('private-driver.'.$driver->public_id);
     expect($payload['type'])->toBe('driver.account_updated');
     expect($payload['account']['earnings_balance'])->toBe('12.50');
 });
@@ -126,14 +126,14 @@ it('broadcasts database notifications to the notifiable user channel', function 
         'data' => ['message' => 'hello'],
         'created_at' => now(),
     ]);
-    $event = new NotificationReceived(123, $notification);
+    $event = new NotificationReceived('01HZXUSERPUBLIC', $notification);
 
     $channels = $event->broadcastOn();
     $payload = $event->broadcastWith();
 
     expect($event->afterCommit)->toBeTrue();
     expect($channels)->toHaveCount(1);
-    expect($channels[0]->name)->toBe('private-user.123');
+    expect($channels[0]->name)->toBe('private-user.01HZXUSERPUBLIC');
     expect($payload['type'])->toBe('notification.received');
     expect($payload['notification'])->toMatchArray([
         'id' => 'notification-1',
@@ -159,7 +159,7 @@ it('broadcasts cleared seller earnings to the seller user channel', function ():
 
     expect($event->afterCommit)->toBeTrue();
     expect($channels)->toHaveCount(1);
-    expect($channels[0]->name)->toBe('private-user.'.$seller->id);
+    expect($channels[0]->name)->toBe('private-user.'.$seller->public_id);
     expect($payload['type'])->toBe('seller.earning_cleared');
     expect($payload['earning']['id'])->toBe($earning->public_id);
     expect($payload['new_available_total'])->toBe('25.00');

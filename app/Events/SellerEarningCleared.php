@@ -34,7 +34,11 @@ final class SellerEarningCleared implements ShouldBroadcast
     /** @return array<int, PrivateChannel> */
     public function broadcastOn(): array
     {
-        return [new PrivateChannel('user.'.$this->earning->seller_user_id)];
+        // Channel is keyed by the seller's User public_id (Critical Rule 11),
+        // never the internal seller_user_id.
+        $publicId = $this->earning->loadMissing('seller')->seller?->public_id;
+
+        return [new PrivateChannel('user.'.$publicId)];
     }
 
     public function broadcastAs(): string

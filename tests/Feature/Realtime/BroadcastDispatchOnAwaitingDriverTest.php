@@ -42,11 +42,11 @@ it('dispatches OrderBroadcastToDriver per eligible driver on transition into awa
     Event::assertDispatchedTimes(OrderBroadcastToDriver::class, 2);
     Event::assertDispatched(
         OrderBroadcastToDriver::class,
-        fn (OrderBroadcastToDriver $e) => $e->driverId === $alice->id,
+        fn (OrderBroadcastToDriver $e) => $e->driverPublicId === $alice->public_id,
     );
     Event::assertDispatched(
         OrderBroadcastToDriver::class,
-        fn (OrderBroadcastToDriver $e) => $e->driverId === $bob->id,
+        fn (OrderBroadcastToDriver $e) => $e->driverPublicId === $bob->public_id,
     );
 });
 

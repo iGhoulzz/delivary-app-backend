@@ -89,7 +89,7 @@ final class StateTransitionService
             foreach ($this->broadcasts->eligibleDriversFor($order) as $profile) {
                 event(new OrderBroadcastToDriver(
                     $order,
-                    (int) $profile->user_id,
+                    $profile->user->public_id,
                     $order->search_radius_tier,
                 ));
             }

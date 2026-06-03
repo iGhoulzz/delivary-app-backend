@@ -33,7 +33,7 @@ it('dispatches realtime notification event for database notifications', function
 
     Event::assertDispatched(
         NotificationReceived::class,
-        fn (NotificationReceived $event): bool => $event->userId === $user->id
+        fn (NotificationReceived $event): bool => $event->userPublicId === $user->public_id
             && $event->notification->id === 'notification-1',
     );
 });
