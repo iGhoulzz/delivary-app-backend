@@ -491,16 +491,18 @@ WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-re
 
 **Ops:** `composer dev` runs Reverb + `broadcasts` worker; `docs/deployment/reverb-supervisor.conf.example` for prod.
 
-**Smoke:** `scripts/realtime-smoke.php` (recording broadcaster, real lifecycle, asserts event sequence + channels + payload safety; commits-then-cleans, no rollback because `$afterCommit` events only fire post-commit). Verified: Pest 133/133, orders-e2e 32/32, realtime-smoke green.
+**Schema delta:** added the standard Laravel `notifications` table (`2026_06_03_000100_create_notifications_table`) — specced in §13.6 but never built (Laravel doesn't ship it by default; §17.1's groups covered only business tables). `NotificationReceived` is now live end-to-end.
 
-**Known gaps:** (1) no `notifications` table exists — `NotificationReceived` is wired but dormant until a migration is added (smoke skips it); (2) `user.{id}`/`driver.{id}` channels still authorise on internal id, not `public_id` — deferred holistic rename from the id-exposure spec §10.
+**Smoke:** `scripts/realtime-smoke.php` (recording broadcaster, real lifecycle, asserts event sequence + channels + payload safety; commits-then-cleans, no rollback because `$afterCommit` events only fire post-commit). Verified: Pest 133/133, orders-e2e 32/32, realtime-smoke green (incl. live database-notification scenario).
+
+**Known gap:** `user.{id}`/`driver.{id}` channels still authorise on internal id, not `public_id` — deferred holistic rename from the id-exposure spec §10.
 
 ### Next Steps (in order)
 1. **Account moderation** — global ban/suspend with reason history (builds on the staff suspend/reinstate + `AccountStatus` foundation; adds a staff-action audit table deferred from this milestone).
 2. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
 3. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
 4. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
-5. **Channel public_id rename + `notifications` table** — deferred items from the Real-time milestone (see §17.13 known gaps).
+5. **Channel `user`/`driver` → `public_id` rename** — deferred from the Real-time milestone (id-exposure spec §10; see §17.13 known gaps).
 
 ### Open Questions
 - Storage fee policy specifics (flat daily after grace period? Tiered?)

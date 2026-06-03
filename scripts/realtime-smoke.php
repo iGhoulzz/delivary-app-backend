@@ -415,6 +415,7 @@ try {
         ['driver_locations', 'driver_id', $snap['users']],
         ['driver_accounts', 'driver_id', $snap['users']],
         ['driver_profiles', 'user_id', $snap['users']],
+        ['notifications', 'notifiable_id', $snap['users']],
         ['model_has_roles', 'model_id', $snap['users']],
         ['personal_access_tokens', 'tokenable_id', $snap['users']],
         ['office_locations', 'id', $snap['office_locations']],
