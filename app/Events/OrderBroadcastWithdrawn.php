@@ -31,14 +31,14 @@ final class OrderBroadcastWithdrawn implements ShouldBroadcast
 
     public function __construct(
         public readonly string $orderPublicId,
-        public readonly int $driverId,
+        public readonly string $driverPublicId,
         public readonly string $reason,
     ) {}
 
     /** @return array<int, PrivateChannel> */
     public function broadcastOn(): array
     {
-        return [new PrivateChannel('driver.'.$this->driverId)];
+        return [new PrivateChannel('driver.'.$this->driverPublicId)];
     }
 
     public function broadcastAs(): string

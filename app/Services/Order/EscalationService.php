@@ -111,7 +111,7 @@ final class EscalationService
         foreach ($this->broadcasts->eligibleDriversFor($order->refresh()) as $profile) {
             event(new OrderBroadcastToDriver(
                 $order,
-                (int) $profile->user_id,
+                $profile->user->public_id,
                 $tier,
             ));
         }

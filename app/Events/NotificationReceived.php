@@ -22,14 +22,14 @@ final class NotificationReceived implements ShouldBroadcast
     public bool $afterCommit = true;
 
     public function __construct(
-        public readonly int $userId,
+        public readonly string $userPublicId,
         public readonly DatabaseNotification $notification,
     ) {}
 
     /** @return array<int, PrivateChannel> */
     public function broadcastOn(): array
     {
-        return [new PrivateChannel('user.'.$this->userId)];
+        return [new PrivateChannel('user.'.$this->userPublicId)];
     }
 
     public function broadcastAs(): string

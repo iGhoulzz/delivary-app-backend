@@ -78,7 +78,7 @@ it('authorizes a user on their own user channel', function (): void {
     $user = User::factory()->create();
 
     $result = channelAuth(
-        request()->merge(['channel_name' => 'private-user.'.$user->id])
+        request()->merge(['channel_name' => 'private-user.'.$user->public_id])
             ->setUserResolver(fn () => $user)
     );
 
@@ -92,7 +92,7 @@ it('rejects a user from another user channel', function (): void {
     $this->expectException(AccessDeniedHttpException::class);
 
     channelAuth(
-        request()->merge(['channel_name' => 'private-user.'.$bob->id])
+        request()->merge(['channel_name' => 'private-user.'.$bob->public_id])
             ->setUserResolver(fn () => $alice)
     );
 });
@@ -143,7 +143,7 @@ it('rejects a non-driver from a driver channel', function (): void {
     $this->expectException(AccessDeniedHttpException::class);
 
     channelAuth(
-        request()->merge(['channel_name' => 'private-driver.'.$user->id])
+        request()->merge(['channel_name' => 'private-driver.'.$user->public_id])
             ->setUserResolver(fn () => $user)
     );
 });
@@ -153,7 +153,7 @@ it('authorizes a driver on their own driver channel', function (): void {
     $driver->assignRole('driver');
 
     $result = channelAuth(
-        request()->merge(['channel_name' => 'private-driver.'.$driver->id])
+        request()->merge(['channel_name' => 'private-driver.'.$driver->public_id])
             ->setUserResolver(fn () => $driver)
     );
 
@@ -169,7 +169,7 @@ it('rejects a driver from another driver channel', function (): void {
     $this->expectException(AccessDeniedHttpException::class);
 
     channelAuth(
-        request()->merge(['channel_name' => 'private-driver.'.$bob->id])
+        request()->merge(['channel_name' => 'private-driver.'.$bob->public_id])
             ->setUserResolver(fn () => $alice)
     );
 });

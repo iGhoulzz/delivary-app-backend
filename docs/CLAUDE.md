@@ -483,7 +483,7 @@ WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-re
 
 **Transport:** Reverb (port 8080) ↔ Laravel via Redis pub/sub. Business events `ShouldBroadcast` on the `broadcasts` queue with `$afterCommit = true`; driver location is `ShouldBroadcastNow` (queue-bypassing, ephemeral). **Driver app stays HTTP-only** — server fans out `POST /api/driver/location`. Channel auth is Sanctum-on-`/broadcasting/auth` (`routes/channels.php`).
 
-**Channels:** `private:user.{id}`, `private:order.{public_id}` (sender/receiver, resolved by public_id), `private:driver.{id}`, `public:track.{token}`.
+**Channels (all key on `public_id`, never internal id — Critical Rule 11):** `private:user.{public_id}`, `private:order.{public_id}` (sender/receiver), `private:driver.{public_id}` (driver's User public_id, `+hasRole('driver')`), `public:track.{token}`.
 
 **9 events:** `OrderBroadcastToDriver` / `OrderBroadcastWithdrawn` (driver pool), `OrderStatusChanged` + `OrderStatusChangedPublic`, `OrderDriverAssigned`, `OrderDriverLocationUpdated`, `DriverAccountUpdated`, `NotificationReceived`, `SellerEarningCleared`.
 
@@ -495,14 +495,13 @@ WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-re
 
 **Smoke:** `scripts/realtime-smoke.php` (recording broadcaster, real lifecycle, asserts event sequence + channels + payload safety; commits-then-cleans, no rollback because `$afterCommit` events only fire post-commit). Verified: Pest 133/133, orders-e2e 32/32, realtime-smoke green (incl. live database-notification scenario).
 
-**Known gap:** `user.{id}`/`driver.{id}` channels still authorise on internal id, not `public_id` — deferred holistic rename from the id-exposure spec §10.
+**Channel public-ID hardening (2026-06-03):** `user`/`driver` channels migrated from internal id → `public_id` (id-exposure spec §10). Events carry `*PublicId` strings or resolve the owner's public_id in `broadcastOn()`; dispatch sites pass public_id. Done TDD, full suite green.
 
 ### Next Steps (in order)
 1. **Account moderation** — global ban/suspend with reason history (builds on the staff suspend/reinstate + `AccountStatus` foundation; adds a staff-action audit table deferred from this milestone).
 2. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
 3. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
 4. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
-5. **Channel `user`/`driver` → `public_id` rename** — deferred from the Real-time milestone (id-exposure spec §10; see §17.13 known gaps).
 
 ### Open Questions
 - Storage fee policy specifics (flat daily after grace period? Tiered?)
