@@ -1202,6 +1202,33 @@ Admin creates an internal account (`admin` or `office_staff`); the system genera
 
 **E2E smoke verified:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios: forced-change, office_staff with 2 offices, reset-temp, suspend-preserves-assignments, reinstate-then-deactivate-removes, self-modify + last-admin guards). Full suite green on merged main: Pest 92/92, staff-e2e + orders-e2e (32/32) passing.
 
+### 17.13 Real-time (Reverb) milestone (2026-05-18 → 2026-06-02) ✅
+
+Replaces client polling with WebSocket push. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` in three phases: **Phase 1** (Claude — Reverb foundation, channel auth, broadcast-safe Resources, the two driver-pool events), **Phase 2** (per-event broadcasts across the order/driver/user surface), **Phase 3** (Claude — integration smoke + docs, this close-out). Backend-only: this milestone ships the API + event contracts; mobile/web clients subscribe later.
+
+**Transport:** Laravel Reverb runs as a separate WS process (`reverb:start`, port 8080) talking to Laravel over Redis pub/sub. Business events are queued (`ShouldBroadcast`, `broadcasts` queue, `$afterCommit = true`); driver location is `ShouldBroadcastNow` and bypasses the queue (ephemeral — the next ping supersedes a lost one). The **driver app stays HTTP-only** — it keeps posting to `POST /api/driver/location`; the server fans that out. Cellular networks drop persistent sockets, so HTTP-up + WS-down is the deliberate design (industry standard for ride-hail/delivery).
+
+**Channel auth:** Sanctum bearer token on `/broadcasting/auth` (Reverb never sees the token). Callbacks in `routes/channels.php`:
+- `private:user.{userId}` — `$user->id === (int) $userId`
+- `private:order.{orderPublicId}` — sender OR registered receiver, resolved by **`public_id`** (Critical Rule 11 — never internal id in channel names)
+- `private:driver.{driverId}` — that driver only, `&& hasRole('driver')`
+- `public:track.{trackingToken}` — public (26-char ULID, unguessable)
+
+**Events catalog (9):** `OrderBroadcastToDriver` / `OrderBroadcastWithdrawn` (driver pool fan-out + withdrawal, Phase 1) on `private:driver.{id}`; `OrderStatusChanged` (private order) paired with `OrderStatusChangedPublic` (public tracking); `OrderDriverAssigned` (order + tracking); `OrderDriverLocationUpdated` (`ShouldBroadcastNow`, order + tracking); `DriverAccountUpdated` (`private:driver.{id}`); `NotificationReceived` (`private:user.{id}`); `SellerEarningCleared` (`private:user.{seller}`).
+
+**Broadcast-safe Resources (critical pattern):** queued broadcasts run **off the HTTP request**, so actor-aware Resources (`OrderResource`, which branches on `$request->user()`) are unsafe — they'd serialise as if no user were present. Dedicated request-independent, audience-neutral Resources were created: `App\Http\Resources\Broadcast\OrderForPartiesResource` (order channel; excludes pickup notes, receiver phone/name, pickup/delivery codes, commission) and `DriverForOrderResource` (excludes internal id/user_id/office_id/plate). Existing `GuestTrackingResource` (public tracking) and `BroadcastOrderResource` (driver pool) were reused as already-safe.
+
+**Dispatch sites:** `StateTransitionService` + `EscalationService` (broadcast-to-driver fan-out via `BroadcastService::eligibleDriversFor()`, the inverse of `candidatesFor()`); `ClaimService` + `AdminAssignmentService` (status + driver-assigned; admin assign/unassign also gained the previously-missing `OrderStatusChanged` dispatch); `BroadcastWithdrawnOnExit` listener (single source of truth — fires withdrawal to the remaining pool whenever an order leaves `awaiting_driver`); `PresenceService::updateLocation()` (location, dispatched *after* the transaction commits since `ShouldBroadcastNow` is not deferred by `$afterCommit`); `CodeVerificationService` / `DriverAccountLedgerService` / `SettlementService` / `SettlementReversalService` (driver account updates); `BroadcastDatabaseNotification` listener on `NotificationSent`; `ClearSellerEarningsJob` (per-row seller-earning cleared).
+
+**Ops:** `composer dev` launches Reverb + the `broadcasts` queue worker alongside server/vite. `docs/deployment/reverb-supervisor.conf.example` documents the prod processes (reverb + `default` + `broadcasts` workers).
+
+**Integration smoke verified:** new `scripts/realtime-smoke.php` swaps in an in-process recording broadcaster and drives a real order lifecycle end-to-end, asserting the exact broadcast sequence, channel names, and that each `broadcastWith()` payload serialises safely off-request (e.g. the order payload hides receiver phone/name/commission; the driver payload hides plate/internal ids). 6 scenarios; commits-then-cleans (no rollback harness — `$afterCommit` events only fire post-commit). Full suite green on merged main: **Pest 133/133, orders-e2e 32/32, realtime-smoke all scenarios.**
+
+**Known gaps / deferred:**
+- **No `notifications` table** exists in the schema yet, so the `NotificationReceived` path (listener → event) is wired but dormant — database notifications cannot persist until a `notifications` migration is added (out of realtime scope; smoke scenario 5 skips with a note).
+- **Channel-name convention:** `private:user.{id}` and `private:driver.{id}` still authorise on **internal id** (as the realtime spec specified), whereas the id-exposure remediation (§10 of its spec) wanted them on `public_id` like the order channel. This holistic rename was deferred — it touches `routes/channels.php` plus every emission site (`new PrivateChannel('user.'.$id)` / `'driver.'.$id`) and is a candidate for a follow-up.
+- Out of scope (per spec §7): push notifications (FCM/APNs), admin/office dashboard channel, presence channels, VoIP phone masking, TLS cert provisioning for `ws.delivary.ly`.
+
 **End of Specification Document**
 
 *This document represents all locked architectural decisions. Future questions and decisions should be appended to this document with date stamps.*
