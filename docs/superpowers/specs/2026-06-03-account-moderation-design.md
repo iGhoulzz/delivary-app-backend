@@ -29,14 +29,14 @@ This milestone introduces a **single, audited, admin-only account-moderation lay
 | 7 | **Approach A — `AccountModerationService` is the sole `AccountStatus` authority; `StaffService` delegates to it** | Removes the duplicate, unaudited staff-suspend path |
 | 8 | **Reinstate respects finance** | Reinstating a user who still owes fees lands them in `SuspendedUnpaidFees`, not `Active` |
 | 9 | **Driver account-ban ≠ DriverStatus change** | Two independent axes; ban cascades (offline + block) but leaves `DriverStatus` to ops/strikes |
-| 10 | **No general `GET /api/admin/users` directory** | A searchable user index belongs to the future internal-dashboard milestone, designed with it |
+| 10 | **Minimal `GET /api/admin/users/lookup?phone=` only — no full directory** | Admins need to resolve an abuse report (a phone number) into a moderation target; this mirrors the existing `*/lookup` pattern (`office/drivers/lookup`). A full searchable/filterable/paginated user *directory* belongs to the future internal-dashboard milestone. (Per Codex review.) |
 
 ### Out of scope (deliberate)
 - Operational `DriverStatus` suspend/ban and the **strike system** (§9.1/§9.6) — separate axis, already built.
 - **Finance-driven auto-suspension** (debt → `SuspendedUnpaidFees` at settlement/retrieval time) — a separate trigger; this milestone only *reads* outstanding-fee state during reinstate and becomes the first writer of `SuspendedUnpaidFees`.
 - Timed/auto-expiring suspensions.
 - User-facing ban notifications (no realtime/push to the moderated user in MVP).
-- Admin user directory / search (deferred to internal dashboard).
+- Full admin user **directory** — searchable/filterable/paginated index (deferred to internal dashboard). The single-purpose phone **lookup** (§8) is in scope.
 - Self-service appeals.
 
 ---
@@ -145,17 +145,19 @@ Schema::create('account_moderation_actions', function (Blueprint $table): void {
 
 All under `auth:sanctum` + `role:admin` + `ModerationPolicy`; `{user}` route-bound by `public_id` (Critical Rule 11).
 
-| Endpoint | Method | Body | Returns |
+| Endpoint | Method | Body / Query | Returns |
 |---|---|---|---|
+| `/api/admin/users/lookup` | GET | `?phone=` (E.164) | thin `UserLookupResource` (0–1 match) |
 | `/api/admin/users/{user}/suspend` | POST | `reason_code`, `detail` | `UserModerationResource` (status + latest action) |
 | `/api/admin/users/{user}/ban` | POST | `reason_code`, `detail` | same |
 | `/api/admin/users/{user}/reinstate` | POST | `reason_code`, `detail` | same |
 | `/api/admin/users/{user}/moderation-history` | GET | — | paginated `ModerationActionResource` |
 
-- **FormRequest** per write endpoint: `reason_code` (`required`, `Rule::enum(ModerationReason::class)`), `detail` (`required`, string, max 1000).
-- **`ModerationPolicy`**: `moderate(User $admin, User $target)` — admin role; deny self (defense-in-depth alongside service guard).
+- **Lookup:** by exact E.164 `phone` (the natural moderation entry point). Returns at most one match as a thin identity payload `{id: public_id, name, phone, roles, account_status}` — admin context, so phone is shown. Anti-enumeration is moot (admin-only, double-gated). Mirrors the existing `office/drivers/lookup` / `office/seller-payouts/lookup` pattern. **Not** a directory: no listing, filters, pagination, or name search (those ship with the dashboard).
+- **FormRequest** per write endpoint: `reason_code` (`required`, `Rule::enum(ModerationReason::class)`) — admins must pick a real reason on direct endpoints; `detail` (`required`, string, `min:3`, `max:1000`). (StaffService delegation supplies a default `reason_code = Other` for backward compatibility — §9.)
+- **`ModerationPolicy`**: `moderate(User $admin, User $target)` — admin role; deny self (defense-in-depth alongside service guard). Lookup + history are admin-only via `role:admin`.
 - **Resources** expose only `public_id`; `ModerationActionResource` nests `actor` as `{id: public_id, name}` (id-exposure pattern), never internal ids.
-- **Rate limit:** `throttle:moderation` (e.g. 30/min/admin) — modest, matches other admin write limiters.
+- **Rate limit:** `throttle:moderation` (e.g. 30/min/admin) on writes + lookup — modest, matches other admin write limiters.
 
 ---
 
@@ -183,7 +185,8 @@ MVP definition: `true` if the user has a `driverAccount` with `debt_balance > 0`
 - Transition table edge cases (ban-from-suspended, no-op rejects).
 
 **Feature:**
-- Each endpoint `actingAs(admin)` → 200 + status changed + audit persisted; non-admin → 403; self → 422; last-active-admin → 422; `{user}` resolves by `public_id`; validation (missing `reason_code`/`detail`) → 422; `moderation-history` pagination + nested public ids only.
+- Each endpoint `actingAs(admin)` → 200 + status changed + audit persisted; non-admin → 403; self → 422; last-active-admin → 422; `{user}` resolves by `public_id`; validation (missing `reason_code`/`detail`, `detail` under `min`) → 422; `moderation-history` pagination + nested public ids only.
+- **Lookup:** admin finds a user by exact `phone` → thin payload with `public_id`; non-admin → 403; unknown phone → empty/`null` (200); no internal ids in payload.
 - Regression: existing Staff CRUD feature tests + `staff-e2e.php` still green after delegation; staff suspend now produces an audit row.
 
 **Smoke:** new `scripts/moderation-e2e.php` (rollback-wrapped): suspend a customer → `LoginService` blocks login; ban an online driver → `activity_status=offline` + excluded from `eligibleDriversFor`; reinstate a driver with `debt_balance>0` → `SuspendedUnpaidFees`; reinstate a clean user → `Active`; audit rows present with correct `from/to`; staff suspend via `StaffService` writes an audit row.
@@ -198,9 +201,10 @@ MVP definition: `true` if the user has a `driverAccount` with `debt_balance > 0`
 - `app/Exceptions/Moderation/ModerationException.php`
 - `app/Models/AccountModerationAction.php`
 - `app/Policies/ModerationPolicy.php`
-- `app/Http/Controllers/Api/Admin/UserModerationController.php`
-- `app/Http/Requests/Admin/Moderation/{SuspendUserRequest,BanUserRequest,ReinstateUserRequest}.php` (or one shared `ModerationActionRequest`)
-- `app/Http/Resources/Moderation/{UserModerationResource,ModerationActionResource}.php`
+- `app/Http/Controllers/Api/Admin/UserModerationController.php` (suspend/ban/reinstate/history)
+- `app/Http/Controllers/Api/Admin/AdminUserLookupController.php` (single-action lookup; or a `lookup` method on the moderation controller)
+- `app/Http/Requests/Admin/Moderation/{ModerationActionRequest, UserLookupRequest}.php` (shared action request; lookup request validates `phone` E.164)
+- `app/Http/Resources/Moderation/{UserModerationResource,ModerationActionResource,UserLookupResource}.php`
 - `database/migrations/XXXX_create_account_moderation_actions_table.php`
 - `database/factories/AccountModerationActionFactory.php`
 - `scripts/moderation-e2e.php`
@@ -210,7 +214,7 @@ MVP definition: `true` if the user has a `driverAccount` with `debt_balance > 0`
 - `app/Services/Staff/StaffService.php` (delegate to moderation)
 - `app/Http/Requests/.../Staff suspend/deactivate requests` (optional reason fields)
 - `app/Models/User.php` (`hasOutstandingFees()`, shared active-admin scope if extracted)
-- `routes/api.php` (4 routes + throttle)
+- `routes/api.php` (5 routes + throttle)
 - `bootstrap/app.php` (render `ModerationException`; register `throttle:moderation`)
 - `app/Policies` registration (AuthServiceProvider) if not auto-discovered
 
@@ -218,7 +222,7 @@ MVP definition: `true` if the user has a `driverAccount` with `debt_balance > 0`
 
 ## 13. Done criteria
 
-- [ ] 4 endpoints live, admin-only, `public_id`-bound
+- [ ] 5 endpoints live, admin-only, `public_id`-bound (suspend/ban/reinstate/history + phone lookup)
 - [ ] `AccountModerationService` sole `AccountStatus` authority; `StaffService` delegates
 - [ ] `account_moderation_actions` migration + model + factory
 - [ ] Reinstate-with-debt → `SuspendedUnpaidFees`; first writer of that state
