@@ -477,9 +477,19 @@ Driver::join('driver_profiles', ...)
 
 **Smoke test:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios). Merged-main verification: Pest 92/92, staff-e2e + orders-e2e (32/32) green.
 
-### Real-time (Reverb) milestone (2026-06-02) ✅
+### Internal-ID exposure remediation (PR #5, merged 2026-06-02) ✅
 
-WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` (Phase 1 foundation + Phase 2 events merged earlier; Phase 3 smoke + docs this close-out). Full detail in SYSTEM_SPECIFICATION §17.13.
+Enforced Critical Rule 11 across the whole API. Full detail in SYSTEM_SPECIFICATION §17.13.
+
+- **Outbound:** every FK id is rendered as a nested `{id, name}` public-id object (order `return_office`/`driver`, status-log `actor`, etc.) — never raw internal ids. Drivers use their existing `User.public_id` (no new column).
+- **Inbound:** `*_public_id` contract across ~9 endpoints, resolved via `App\Support\Resolvers\PublicIdResolver`.
+- **Status-log metadata:** write-time `*_public_id` summaries + fail-closed flat sanitizer `App\Support\OrderStatusLogMetadata` (rejects nested arrays).
+- **Pattern:** guarded Resources expose `const RELATIONS`; callers `loadMissing(Resource::RELATIONS)` → no null nested ids, no N+1.
+- **Exemption:** `regions`/`service_areas` keep numeric `id` (reference data) — see Key Conventions note.
+
+### Real-time (Reverb) milestone (2026-06-03) ✅
+
+WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` (Phase 1 foundation + Phase 2 events merged earlier; Phase 3 smoke + docs this close-out). Full detail in SYSTEM_SPECIFICATION §17.14.
 
 **Transport:** Reverb (port 8080) ↔ Laravel via Redis pub/sub. Business events `ShouldBroadcast` on the `broadcasts` queue with `$afterCommit = true`; driver location is `ShouldBroadcastNow` (queue-bypassing, ephemeral). **Driver app stays HTTP-only** — server fans out `POST /api/driver/location`. Channel auth is Sanctum-on-`/broadcasting/auth` (`routes/channels.php`).
 
