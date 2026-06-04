@@ -9,6 +9,7 @@ use App\Listeners\BroadcastDatabaseNotification;
 use App\Listeners\BroadcastWithdrawnOnExit;
 use App\Models\PlatformSetting;
 use App\Models\User as UserModel;
+use App\Policies\ModerationPolicy;
 use App\Policies\StaffPolicy;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +33,7 @@ final class AppServiceProvider extends ServiceProvider
         Event::listen(NotificationSent::class, BroadcastDatabaseNotification::class);
 
         Gate::policy(UserModel::class, StaffPolicy::class);
+        Gate::define('moderate', [ModerationPolicy::class, 'moderate']);
 
         $this->configureRateLimiters();
     }
@@ -200,6 +202,14 @@ final class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinutes(15, 5)
                 ->by('password_change_temp:'.$userId)
+                ->response($this->throttleResponseCallback());
+        });
+
+        RateLimiter::for('moderation', function (Request $request): Limit {
+            $key = (string) ($request->user()?->id ?? $request->ip());
+
+            return Limit::perMinute(30)
+                ->by('moderation:'.$key)
                 ->response($this->throttleResponseCallback());
         });
     }

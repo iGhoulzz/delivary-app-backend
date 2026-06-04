@@ -983,3 +983,54 @@ Pending after Docker Desktop is started:
 - `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/staff-e2e.php');"`
 - `$env:BROADCAST_CONNECTION='null'; php artisan tinker --execute="require base_path('scripts/orders-e2e.php');"`
 - `php artisan migrate:status --pending`
+
+---
+
+## 2026-06-03 Slice 17 - Account Moderation Slice B HTTP + Staff Delegation
+
+Worked in `C:\Users\User\Desktop\delivary-app-codex` on branch `account-moderation/http`, following `docs/superpowers/plans/2026-06-03-account-moderation-slice-b-codex.md`.
+
+Scope implemented:
+
+- Added `ModerationPolicy` and registered the `moderate` gate.
+- Added moderation FormRequests for direct admin actions and phone lookup.
+- Added `StaffModerationRequest` so staff suspend/reinstate/deactivate can accept optional `reason_code` and `detail`.
+- Added moderation Resources:
+  - `UserModerationResource`
+  - `ModerationActionResource`
+  - `UserLookupResource`
+- Added admin HTTP controllers:
+  - `UserModerationController`
+  - `AdminUserLookupController`
+- Added `/api/admin/users` routes for lookup, suspend, ban, reinstate, and moderation history.
+- Added `throttle:moderation`.
+- Refactored `StaffService::suspend()`, `reinstate()`, and `deactivate()` to delegate account-status writes to `AccountModerationService::apply()`, preserving existing staff self/last-admin guards.
+- Added `scripts/moderation-e2e.php`.
+- Added unit/feature tests for the policy, resources, admin endpoints, lookup, and staff audit delegation.
+
+Important boundary:
+
+- Slice A core is still absent on this branch: `ModerationAction`, `ModerationReason`, `AccountModerationAction`, `AccountModerationService`, `User::hasOutstandingFees()`, and `User::moderationActions()` are expected to arrive from Claude's Slice A. I did not edit those files.
+
+Verification:
+
+- `php -l` passed for all touched/new PHP files.
+- `vendor\bin\pint ...` passed; it fixed one test import.
+- `php artisan route:list --path=admin/users` passed and shows all 5 moderation routes.
+- `git diff --check` passed.
+- Main worktree at `C:\Users\User\Desktop\delivary-app` is clean.
+
+Blocked verification:
+
+- `vendor\bin\pest tests\Unit\Policies\ModerationPolicyTest.php tests\Unit\Resources\Moderation\ModerationResourcesTest.php` could not run because PostgreSQL on `127.0.0.1:5432` is unavailable and Docker Desktop is stopped.
+- `docker ps` failed because Docker Desktop's Linux engine pipe is not running.
+- Full feature tests and `scripts/moderation-e2e.php` also require Claude Slice A core to be merged/rebased into this branch.
+
+Next after Claude Slice A merges:
+
+- `git fetch origin && git rebase origin/main`
+- `php artisan migrate`
+- `vendor\bin\pest tests\Unit\Policies\ModerationPolicyTest.php tests\Unit\Resources\Moderation\ModerationResourcesTest.php tests\Feature\Admin\Moderation`
+- `vendor\bin\pest --filter=Staff`
+- `php artisan tinker --execute="require base_path('scripts/moderation-e2e.php');"`
+- Run staff and orders smoke scripts for regression.
