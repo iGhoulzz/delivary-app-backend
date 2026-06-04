@@ -14,6 +14,7 @@ use App\Models\DriverProfile;
 use App\Models\User;
 use App\Services\Moderation\AccountModerationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Spatie\Permission\Models\Role;
 
 uses(RefreshDatabase::class);
@@ -98,3 +99,26 @@ it('rejects no-op transitions (suspend an already-suspended user)', function ():
     $target = User::factory()->create(['account_status' => AccountStatus::Suspended->value]);
     $this->service->suspend($target, $this->admin, ModerationReason::Other, 'x');
 })->throws(ModerationException::class);
+
+it('guards against stale model state by locking and reloading the target row', function (): void {
+    $target = User::factory()->create(['account_status' => AccountStatus::Active->value]);
+
+    // Mutate the row directly so the in-memory instance stays stale (still Active).
+    DB::table('users')->where('id', $target->id)->update(['account_status' => AccountStatus::Suspended->value]);
+    expect($target->account_status)->toBe(AccountStatus::Active); // stale snapshot
+
+    // Guard must run against the locked, freshly-loaded row (Suspended), not the
+    // stale instance — so this is an invalid suspend->suspend transition.
+    $this->service->suspend($target, $this->admin, ModerationReason::Other, 'x');
+})->throws(ModerationException::class);
+
+it('writes from_status from the locked row, not the stale instance', function (): void {
+    $target = User::factory()->create(['account_status' => AccountStatus::Active->value]);
+    DB::table('users')->where('id', $target->id)->update(['account_status' => AccountStatus::Banned->value]);
+
+    // Stale instance says Active; reinstate is valid from the real (Banned) row.
+    $this->service->reinstate($target, $this->admin, ModerationReason::Other, 'appeal');
+
+    $row = AccountModerationAction::query()->latest('id')->first();
+    expect($row->from_status)->toBe(AccountStatus::Banned); // locked truth, not stale Active
+});
