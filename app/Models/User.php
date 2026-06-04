@@ -196,6 +196,26 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
         return $this->hasMany(DriverAccountTransaction::class, 'driver_id');
     }
 
+    public function moderationActions(): HasMany
+    {
+        return $this->hasMany(AccountModerationAction::class, 'user_id');
+    }
+
+    /**
+     * Whether the user currently owes platform fees. MVP: a driver with a
+     * positive debt_balance — the only concrete user-level debt tracked today.
+     * Extend here when seller unpaid-retrieval-fee tracking exists. Used by
+     * moderation reinstate to land debtors in suspended_unpaid_fees rather than
+     * active (spec §6.5 / §10).
+     */
+    public function hasOutstandingFees(): bool
+    {
+        $account = $this->driverAccount;
+
+        return $account !== null
+            && bccomp((string) $account->debt_balance, '0', 2) === 1;
+    }
+
     public function driverLocationHistory(): HasMany
     {
         return $this->hasMany(DriverLocation::class, 'driver_id');
