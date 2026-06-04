@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Admin\Staff;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Staff\CreateStaffRequest;
 use App\Http\Requests\Staff\IndexStaffRequest;
+use App\Http\Requests\Staff\StaffModerationRequest;
 use App\Http\Requests\Staff\UpdateStaffRequest;
 use App\Http\Resources\Staff\StaffResource;
 use App\Models\User;
@@ -72,30 +73,36 @@ final class StaffController extends Controller
         return new StaffResource($updated->load('roles', 'activeOfficeAssignments.office'));
     }
 
-    public function suspend(User $staff): StaffResource
+    public function suspend(StaffModerationRequest $request, User $staff): StaffResource
     {
         $this->authorize('suspend', $staff);
 
         return new StaffResource(
-            $this->staff->suspend($staff, request()->user())->load('roles', 'activeOfficeAssignments.office'),
+            $this->staff
+                ->suspend($staff, $request->user(), $request->reason(), $request->detail())
+                ->load('roles', 'activeOfficeAssignments.office'),
         );
     }
 
-    public function reinstate(User $staff): StaffResource
+    public function reinstate(StaffModerationRequest $request, User $staff): StaffResource
     {
         $this->authorize('reinstate', $staff);
 
         return new StaffResource(
-            $this->staff->reinstate($staff, request()->user())->load('roles', 'activeOfficeAssignments.office'),
+            $this->staff
+                ->reinstate($staff, $request->user(), $request->reason(), $request->detail())
+                ->load('roles', 'activeOfficeAssignments.office'),
         );
     }
 
-    public function deactivate(User $staff): StaffResource
+    public function deactivate(StaffModerationRequest $request, User $staff): StaffResource
     {
         $this->authorize('deactivate', $staff);
 
         return new StaffResource(
-            $this->staff->deactivate($staff, request()->user())->load('roles', 'activeOfficeAssignments.office'),
+            $this->staff
+                ->deactivate($staff, $request->user(), $request->reason(), $request->detail())
+                ->load('roles', 'activeOfficeAssignments.office'),
         );
     }
 

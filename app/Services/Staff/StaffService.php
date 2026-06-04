@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace App\Services\Staff;
 
 use App\Enums\AccountStatus;
+use App\Enums\ModerationAction;
+use App\Enums\ModerationReason;
 use App\Enums\StaffErrorCode;
 use App\Exceptions\Staff\StaffDomainException;
 use App\Models\OfficeStaffAssignment;
 use App\Models\User;
+use App\Services\Moderation\AccountModerationService;
 use App\Support\DTO\CreateStaffInput;
 use App\Support\DTO\UpdateStaffInput;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +22,7 @@ final class StaffService
     public function __construct(
         private readonly TempPasswordGenerator $passwords,
         private readonly OfficeAssignmentService $officeAssignments,
+        private readonly AccountModerationService $moderation,
     ) {}
 
     /**
@@ -64,34 +68,52 @@ final class StaffService
         return $staff->fresh();
     }
 
-    public function suspend(User $staff, User $actor): User
+    public function suspend(User $staff, User $actor, ?ModerationReason $reason = null, ?string $detail = null): User
     {
         $this->assertNotSelf($staff, $actor);
         $this->assertNotLastAdmin($staff);
 
-        return DB::transaction(function () use ($staff): User {
-            $staff->forceFill(['account_status' => AccountStatus::Suspended->value])->save();
-            $staff->tokens()->delete();
-
-            return $staff->fresh();
-        });
+        return $this->moderation->apply(
+            $staff,
+            $actor,
+            ModerationAction::Suspend,
+            AccountStatus::Suspended,
+            $reason ?? ModerationReason::Other,
+            $detail ?? 'Staff lifecycle suspension.',
+        );
     }
 
-    public function reinstate(User $staff, User $actor): User
+    public function reinstate(User $staff, User $actor, ?ModerationReason $reason = null, ?string $detail = null): User
     {
-        $staff->forceFill(['account_status' => AccountStatus::Active->value])->save();
+        $toStatus = $staff->hasOutstandingFees()
+            ? AccountStatus::SuspendedUnpaidFees
+            : AccountStatus::Active;
 
-        return $staff->fresh();
+        return $this->moderation->apply(
+            $staff,
+            $actor,
+            ModerationAction::Reinstate,
+            $toStatus,
+            $reason ?? ModerationReason::Other,
+            $detail ?? 'Staff lifecycle reinstatement.',
+        );
     }
 
-    public function deactivate(User $staff, User $actor): User
+    public function deactivate(User $staff, User $actor, ?ModerationReason $reason = null, ?string $detail = null): User
     {
         $this->assertNotSelf($staff, $actor);
         $this->assertNotLastAdmin($staff);
 
-        return DB::transaction(function () use ($staff): User {
-            $staff->forceFill(['account_status' => AccountStatus::Suspended->value])->save();
-            $staff->tokens()->delete();
+        return DB::transaction(function () use ($staff, $actor, $reason, $detail): User {
+            $this->moderation->apply(
+                $staff,
+                $actor,
+                ModerationAction::Suspend,
+                AccountStatus::Suspended,
+                $reason ?? ModerationReason::Other,
+                $detail ?? 'Staff lifecycle deactivation.',
+            );
+
             OfficeStaffAssignment::query()
                 ->where('user_id', $staff->id)
                 ->whereNull('removed_at')

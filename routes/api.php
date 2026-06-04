@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\Admin\AdminUserLookupController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as AdminSettlementListSellerPayoutsController;
@@ -10,6 +11,7 @@ use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as Adm
 use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
 use App\Http\Controllers\Api\Admin\Staff\OfficeAssignmentController;
 use App\Http\Controllers\Api\Admin\Staff\StaffController;
+use App\Http\Controllers\Api\Admin\UserModerationController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
 use App\Http\Controllers\Api\Auth\LogoutController;
@@ -264,6 +266,18 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::post('/{staff}/reset-temp-password', [StaffController::class, 'resetTempPassword'])->name('reset-temp-password');
         Route::post('/{staff}/office-assignments', [OfficeAssignmentController::class, 'store'])->name('office-assignments.store');
         Route::delete('/{staff}/office-assignments/{assignment}', [OfficeAssignmentController::class, 'destroy'])->name('office-assignments.destroy');
+    });
+
+// /admin/users - admin account moderation
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required', 'throttle:moderation'])
+    ->prefix('admin/users')
+    ->name('admin.users.')
+    ->group(function (): void {
+        Route::get('lookup', AdminUserLookupController::class)->name('lookup');
+        Route::post('{user}/suspend', [UserModerationController::class, 'suspend'])->name('suspend');
+        Route::post('{user}/ban', [UserModerationController::class, 'ban'])->name('ban');
+        Route::post('{user}/reinstate', [UserModerationController::class, 'reinstate'])->name('reinstate');
+        Route::get('{user}/moderation-history', [UserModerationController::class, 'history'])->name('moderation-history');
     });
 
 // ─── /me/password/change-from-temp — bypasses the password-change-required middleware ──
