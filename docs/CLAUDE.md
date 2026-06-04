@@ -296,7 +296,7 @@ Driver::join('driver_profiles', ...)
 ## Current Project State
 
 **Last updated:** 2026-06-02
-**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels. Account moderation is next.
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons. Test infrastructure (Tinker smokes → Pest) is next.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -477,9 +477,19 @@ Driver::join('driver_profiles', ...)
 
 **Smoke test:** new `scripts/staff-e2e.php` (6 rollback-wrapped scenarios). Merged-main verification: Pest 92/92, staff-e2e + orders-e2e (32/32) green.
 
-### Real-time (Reverb) milestone (2026-06-02) ✅
+### Internal-ID exposure remediation (PR #5, merged 2026-06-02) ✅
 
-WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` (Phase 1 foundation + Phase 2 events merged earlier; Phase 3 smoke + docs this close-out). Full detail in SYSTEM_SPECIFICATION §17.13.
+Enforced Critical Rule 11 across the whole API. Full detail in SYSTEM_SPECIFICATION §17.13.
+
+- **Outbound:** every FK id is rendered as a nested `{id, name}` public-id object (order `return_office`/`driver`, status-log `actor`, etc.) — never raw internal ids. Drivers use their existing `User.public_id` (no new column).
+- **Inbound:** `*_public_id` contract across ~9 endpoints, resolved via `App\Support\Resolvers\PublicIdResolver`.
+- **Status-log metadata:** write-time `*_public_id` summaries + fail-closed flat sanitizer `App\Support\OrderStatusLogMetadata` (rejects nested arrays).
+- **Pattern:** guarded Resources expose `const RELATIONS`; callers `loadMissing(Resource::RELATIONS)` → no null nested ids, no N+1.
+- **Exemption:** `regions`/`service_areas` keep numeric `id` (reference data) — see Key Conventions note.
+
+### Real-time (Reverb) milestone (2026-06-03) ✅
+
+WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-realtime-reverb-design.md` (Phase 1 foundation + Phase 2 events merged earlier; Phase 3 smoke + docs this close-out). Full detail in SYSTEM_SPECIFICATION §17.14.
 
 **Transport:** Reverb (port 8080) ↔ Laravel via Redis pub/sub. Business events `ShouldBroadcast` on the `broadcasts` queue with `$afterCommit = true`; driver location is `ShouldBroadcastNow` (queue-bypassing, ephemeral). **Driver app stays HTTP-only** — server fans out `POST /api/driver/location`. Channel auth is Sanctum-on-`/broadcasting/auth` (`routes/channels.php`).
 
@@ -497,9 +507,19 @@ WebSocket push replaces polling. Built per `docs/superpowers/specs/2026-05-18-re
 
 **Channel public-ID hardening (2026-06-03):** `user`/`driver` channels migrated from internal id → `public_id` (id-exposure spec §10). Events carry `*PublicId` strings or resolve the owner's public_id in `broadcastOn()`; dispatch sites pass public_id. Done TDD, full suite green.
 
+### Account Moderation milestone (2026-06-03) ✅
+
+Admin-only moderation on the **`AccountStatus`** axis (suspend/ban/reinstate) for any user. Full detail in SYSTEM_SPECIFICATION §17.15. Parallel-worktree milestone (Claude Slice A core / Codex Slice B HTTP; cross-reviewed, PRs #9/#10).
+
+- **`AccountModerationService`** = sole authority for manual `Active ⇄ Suspended/Banned`. Public methods open one txn, `lockForUpdate()`+reload the target, guard (self / last-active-admin / valid-transition) against committed state, then write + revoke tokens + cascade + audit (Critical Rule 3 — never check-then-act on a stale instance; last-admin count locks admin rows). Distinct from operational `DriverStatus`/strikes (untouched).
+- **Targeted cascade:** drivers forced `offline` (out of `eligibleDriversFor`), `DriverStatus` untouched, live delivery left for support; staff keep office assignments.
+- **`StaffService` delegates** suspend/reinstate/deactivate to `AccountModerationService::apply()` (keeps its `StaffErrorCode` guards) → staff suspensions are now audited.
+- **Reinstate respects finance:** debtor (`User::hasOutstandingFees()`, MVP = driver `debt_balance>0`) → `SuspendedUnpaidFees` (first writer of that state).
+- **5 routes** under `admin/users` (admin-only + `ModerationPolicy`, `public_id`-bound, `throttle:moderation`): `lookup?phone=`, `{user}/{suspend,ban,reinstate}`, `{user}/moderation-history`. New `account_moderation_actions` append-only audit table; `ModerationAction/Reason/ErrorCode` enums + `ModerationException`.
+- **Verified merged main:** Pest 163/163, Pint clean, `moderation-e2e` + `staff-e2e` + `orders-e2e` (32/32) green. Security review: no HIGH/MEDIUM.
+
 ### Next Steps (in order)
-1. **Account moderation** — global ban/suspend with reason history (builds on the staff suspend/reinstate + `AccountStatus` foundation; adds a staff-action audit table deferred from this milestone).
-2. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
+1. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
 3. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
 4. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
 
