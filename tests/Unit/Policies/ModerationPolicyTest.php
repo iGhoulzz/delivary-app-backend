@@ -22,9 +22,9 @@ it('forbids a non-admin', function (): void {
     expect((new ModerationPolicy)->moderate(User::factory()->create(), User::factory()->create()))->toBeFalse();
 });
 
-it('forbids moderating yourself', function (): void {
+it('leaves self-moderation to the service domain guard', function (): void {
     $admin = User::factory()->create();
     $admin->assignRole('admin');
 
-    expect((new ModerationPolicy)->moderate($admin, $admin))->toBeFalse();
+    expect((new ModerationPolicy)->moderate($admin, $admin))->toBeTrue();
 });

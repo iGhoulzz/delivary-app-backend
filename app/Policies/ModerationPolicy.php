@@ -10,6 +10,6 @@ final class ModerationPolicy
 {
     public function moderate(User $actor, User $target): bool
     {
-        return $actor->hasRole('admin') && $actor->id !== $target->id;
+        return $actor->hasRole('admin');
     }
 }
