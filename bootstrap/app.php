@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\Moderation\ModerationException;
 use App\Exceptions\Order\OrderDomainException;
 use App\Exceptions\Staff\StaffDomainException;
 use App\Http\Middleware\EnsurePasswordChanged;
@@ -41,6 +42,10 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (StaffDomainException $e): JsonResponse {
+            return new JsonResponse($e->toResponse(), $e->httpStatus());
+        });
+
+        $exceptions->render(function (ModerationException $e): JsonResponse {
             return new JsonResponse($e->toResponse(), $e->httpStatus());
         });
     })->create();
