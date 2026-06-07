@@ -93,6 +93,8 @@
 - Services get unit tests. Controllers get feature tests via `actingAs()` + JSON assertions
 - `RefreshDatabase` or `DatabaseTransactions` in all tests
 - Test behavior, not trivial getters/setters
+- **Test DB:** `phpunit.xml` defaults to `delivary_app_testing` (safe — tests never touch dev DB `delivary_app`; enforced by `tests/Feature/Smoke/TestEnvironmentTest`). **Per-worktree isolation:** export `DB_DATABASE` before running Pest (the `<env force="false">` default lets the OS var win), e.g. `DB_DATABASE=delivary_app_testing_claude vendor/bin/pest`; `createdb` that DB once. `.env.testing` does NOT work for the DB name (phpunit sets it before Laravel loads `.env.testing`).
+- **End-to-end smoke scenarios** live in `tests/Feature/Smoke/` (Pest, source of truth, run in CI) and are also kept as `scripts/*-e2e.php` Tinker scripts for manual debugging against the dev DB.
 
 ### Anti-Patterns — Reject These
 - ❌ Logic in controllers → move to service
