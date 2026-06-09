@@ -26,7 +26,12 @@
         <env name="DB_CONNECTION" value="pgsql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
         <env name="DB_PORT" value="5432"/>
-        <env name="DB_DATABASE" value="delivary_app_testing"/>
+        <!-- Safe default test DB. force="false" (PHPUnit default, explicit here):
+             a worktree may override it by EXPORTING DB_DATABASE before running
+             Pest, e.g. DB_DATABASE=delivary_app_testing_claude — so parallel
+             worktrees don't share/clobber one test DB. Note: .env.testing does
+             NOT work for this (phpunit sets the var before Laravel loads it). -->
+        <env name="DB_DATABASE" value="delivary_app_testing" force="false"/>
         <env name="DB_USERNAME" value="postgres"/>
         <env name="DB_PASSWORD" value="secret"/>
         <env name="DB_URL" value=""/>

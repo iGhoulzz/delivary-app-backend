@@ -17,9 +17,7 @@ use Illuminate\Support\Collection;
 
 final class ProcessSellerPayoutController extends Controller
 {
-    public function __construct(private readonly SellerPayoutService $payouts)
-    {
-    }
+    public function __construct(private readonly SellerPayoutService $payouts) {}
 
     public function __invoke(ProcessSellerPayoutRequest $request): JsonResponse|SellerPayoutResource
     {

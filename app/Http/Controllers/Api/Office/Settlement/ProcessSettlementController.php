@@ -17,9 +17,7 @@ use Illuminate\Http\JsonResponse;
 
 final class ProcessSettlementController extends Controller
 {
-    public function __construct(private readonly SettlementService $settlements)
-    {
-    }
+    public function __construct(private readonly SettlementService $settlements) {}
 
     public function __invoke(ProcessSettlementRequest $request): JsonResponse|SettlementResource
     {

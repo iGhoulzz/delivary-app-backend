@@ -14,9 +14,7 @@ use Illuminate\Http\JsonResponse;
 
 final class ReverseSettlementController extends Controller
 {
-    public function __construct(private readonly SettlementReversalService $reversal)
-    {
-    }
+    public function __construct(private readonly SettlementReversalService $reversal) {}
 
     public function __invoke(
         ReverseSettlementRequest $request,
