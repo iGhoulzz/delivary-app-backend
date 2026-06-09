@@ -38,7 +38,8 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          # Locked deps (Symfony 8, collision 8.9) require PHP >= 8.4; local dev runs 8.4.
+          php-version: '8.4'
           extensions: pdo_pgsql, bcmath, gd, exif, redis
           coverage: none
 
