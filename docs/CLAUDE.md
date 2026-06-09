@@ -298,7 +298,7 @@ Driver::join('driver_profiles', ...)
 ## Current Project State
 
 **Last updated:** 2026-06-02
-**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons. Test infrastructure (Tinker smokes → Pest) is next.
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10). Test infrastructure ✅ (milestone 2026-06-04).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons; all e2e smokes run as Pest tests in CI. Merchant deliveries (sub-project E) is next.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -520,10 +520,20 @@ Admin-only moderation on the **`AccountStatus`** axis (suspend/ban/reinstate) fo
 - **5 routes** under `admin/users` (admin-only + `ModerationPolicy`, `public_id`-bound, `throttle:moderation`): `lookup?phone=`, `{user}/{suspend,ban,reinstate}`, `{user}/moderation-history`. New `account_moderation_actions` append-only audit table; `ModerationAction/Reason/ErrorCode` enums + `ModerationException`.
 - **Verified merged main:** Pest 163/163, Pint clean, `moderation-e2e` + `staff-e2e` + `orders-e2e` (32/32) green. Security review: no HIGH/MEDIUM.
 
+### Test Infrastructure milestone (2026-06-04) ✅
+
+Tinker smoke scripts promoted to Pest + CI. Full detail in SYSTEM_SPECIFICATION §17.16.
+
+- **`tests/Feature/Smoke/`** holds the converted smokes: `ModerationLifecycleTest` (6), `StaffLifecycleTest` (7), `OrdersHappyPathTest` (3), `OrdersExceptionsTest` (8), `OrdersReturnFlowTest` (9), `OrdersSettlementTest` (15) + env/world guards (50 scenario tests total). Each ex-scenario is an isolated `it()` with `RefreshDatabase` + real expectations.
+- **`Tests\Support\TestWorld::create()`** builds the geographic+platform world (seeds roles/settings + PostGIS service-area/region/office + pickup/dropoff) — there's no Region/ServiceArea factory, so integration tests build their world.
+- **Test DB:** safe default `delivary_app_testing` (`phpunit.xml`, `force="false"`); per-worktree isolation via **exported** `DB_DATABASE` (not `.env.testing`); `TestEnvironmentTest` guards against ever hitting the dev DB.
+- **CI:** `.github/workflows/ci.yml` runs migrate + Pint + Pest on a `postgis/postgis` service.
+- **Tinker scripts kept** for manual debugging; `realtime-smoke.php` conversion deferred.
+
 ### Next Steps (in order)
-1. **Test infrastructure** — promote Tinker smoke tests to Pest feature tests against a separate test DB.
-3. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
-4. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
+1. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
+2. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
+3. **Convert `realtime-smoke.php` to Pest** (`RealtimeSmokeTest`) — deferred from the test-infrastructure milestone.
 
 ### Open Questions
 - Storage fee policy specifics (flat daily after grace period? Tiered?)

@@ -1262,6 +1262,22 @@ Moderation acts on the **`AccountStatus`** axis (can this person use the platfor
 
 **Verified on merged main:** Pest **163/163**, Pint clean, new `scripts/moderation-e2e.php` + existing `staff-e2e.php` + `orders-e2e.php` (32/32) all green. Security review: no HIGH/MEDIUM.
 
+### 17.16 Test Infrastructure milestone (2026-06-04) ✅
+
+Promoted the three Tinker smoke scripts to first-class Pest tests and added CI. Built per `docs/superpowers/specs/2026-06-04-test-infrastructure-design.md` (educational/narrated build-along).
+
+**Smokes → Pest:** the `staff`/`moderation`/`orders` Tinker scripts (which ran by hand against the seeded dev DB, printing `echo "PASS"`) were converted into Pest feature tests under `tests/Feature/Smoke/` — each former scenario is an isolated `it()` with real assertions and `RefreshDatabase` (replacing the scripts' single `DB::beginTransaction()/rollBack()` harness). Coverage: `ModerationLifecycleTest` (6), `StaffLifecycleTest` (7), and orders in four reviewable batches — `OrdersHappyPathTest` (3), `OrdersExceptionsTest` (8), `OrdersReturnFlowTest` (9), `OrdersSettlementTest` (15) — plus environment/world guards. The Tinker scripts are **kept** for manual debugging; Pest is the source of truth CI runs.
+
+**`Tests\Support\TestWorld`:** a fresh test DB is empty and there was no Region/ServiceArea factory or seeder (the dev region was hand-made), so the orders smokes had nothing to run against. `TestWorld::create()` seeds roles + platform settings and builds an active service-area → region → office (PostGIS polygon around Tripoli) returning an in-area pickup/dropoff — the integration-test analog of a factory.
+
+**Per-worktree test DB:** `phpunit.xml` keeps `delivary_app_testing` as a safe default with `force="false"`, so a worktree isolates itself by **exporting** `DB_DATABASE` before running Pest (verified: an exported var wins; `.env.testing` does not, because phpunit sets the var before Laravel loads it). `tests/Feature/Smoke/TestEnvironmentTest` guarantees tests never target the dev DB.
+
+**CI:** `.github/workflows/ci.yml` runs on push/PR against a `postgis/postgis` service container — `composer install` → `migrate` → `pint --test` → `pest`. Same suite, clean machine.
+
+**Out of scope (deferred):** converting `scripts/realtime-smoke.php` (special broadcast/`$afterCommit` behavior — a separate `RealtimeSmokeTest` later); coverage thresholds.
+
+**Verified:** full Pest suite green incl. the new `tests/Feature/Smoke/` (50 scenario tests), Pint clean.
+
 **End of Specification Document**
 
 *This document represents all locked architectural decisions. Future questions and decisions should be appended to this document with date stamps.*
