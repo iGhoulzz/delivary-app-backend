@@ -13,9 +13,7 @@ use Illuminate\Http\Request;
 
 final class PreviewSettlementController extends Controller
 {
-    public function __construct(private readonly SettlementService $settlements)
-    {
-    }
+    public function __construct(private readonly SettlementService $settlements) {}
 
     public function __invoke(Request $request, string $driverPublicId): SettlementPreviewResource
     {

@@ -15,9 +15,7 @@ use Illuminate\Http\JsonResponse;
 
 final class LookupSellerPayoutController extends Controller
 {
-    public function __construct(private readonly SellerPayoutService $payouts)
-    {
-    }
+    public function __construct(private readonly SellerPayoutService $payouts) {}
 
     public function __invoke(LookupSellerPayoutRequest $request): JsonResponse
     {

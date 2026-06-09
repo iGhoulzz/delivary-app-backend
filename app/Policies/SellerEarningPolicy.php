@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Policies;
 
+use App\Http\Controllers\Api\Me\Settlement\ShowEarningsController;
 use App\Models\SellerEarning;
 use App\Models\User;
 
@@ -14,7 +15,7 @@ use App\Models\User;
  * authenticated user becomes a "seller" implicitly by creating a P2P
  * sale order (their `id` matches `seller_user_id` on the earning).
  * For that reason, the seller-facing abilities here authorise by FK
- * ownership alone, mirroring {@see \App\Policies\OrderPolicy::viewAsSender}.
+ * ownership alone, mirroring {@see OrderPolicy::viewAsSender}.
  * Do NOT add role gates to these methods.
  */
 final class SellerEarningPolicy
@@ -26,7 +27,7 @@ final class SellerEarningPolicy
 
     /**
      * Any authenticated user may view their own earnings dashboard. The
-     * dashboard query in {@see \App\Http\Controllers\Api\Me\Settlement\ShowEarningsController}
+     * dashboard query in {@see ShowEarningsController}
      * scopes by `$user->id`, so the policy is a route-auth sanity gate.
      */
     public function viewOwnDashboard(User $user): bool
