@@ -154,8 +154,12 @@ it('admin redirect-return writes an audit row and changes office without status 
 
     expect($redirected->status)->toBe(OrderStatus::ReturningToOffice);
     expect($redirected->return_office_id)->toBe($alternate->id);
-    $log = $redirected->statusLogs()->latest('id')->first();
-    expect($log?->metadata['event'] ?? null)->toBe('return_office_redirected');
+
+    // Assert the redirect wrote its audit row — not that it happens to be the
+    // single newest log (ordering between sibling logs isn't a contract).
+    $wroteRedirectLog = $redirected->statusLogs()->get()
+        ->contains(fn ($log): bool => ($log->metadata['event'] ?? null) === 'return_office_redirected');
+    expect($wroteRedirectLog)->toBeTrue();
 });
 
 it('admin waiver allows a zero-cash retrieval', function (): void {
