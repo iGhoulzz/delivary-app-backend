@@ -55,7 +55,7 @@ Slice A  (admin)                     Slice B  (merchant)
                                          CreationService (existing core)
                                               │
                               reuses ─────────┼───────────────────────────────
-                              PricingService  (+ MerchantRateContext, sale-order commission)
+                              PricingService  (+ MerchantOrderContext, sale-order commission)
                               QuoteService    (+ context, rates in payload)
                               CreationService (+ optional context, item_price for merchant)
                               CodeVerificationService / StateTransitionService — UNCHANGED
@@ -75,47 +75,57 @@ order, never a replacement for `sender_user_id`.
 These are threaded as an **optional merchant context** so the customer/P2P path passes
 `null` and is behaviorally unchanged.
 
-### 4.1 `MerchantRateContext` value object (new, `app/ValueObjects/`)
-Immutable carrier for the merchant dimension through pricing/quote/creation:
+### 4.1 `MerchantOrderContext` value object (new, `app/ValueObjects/`)
+Immutable carrier for the merchant dimension through pricing/quote/creation. It carries the
+rate overrides **and** the business identity, because `CreationService` writes
+`sender_name`/`sender_phone` from the caller and must use the *business* identity for a
+merchant order (not the owner's personal name/phone):
 ```
-final readonly class MerchantRateContext {
+final readonly class MerchantOrderContext {
     public int $merchantProfileId;
     public ?string $commissionRateOverride;   // null = use platform default
     public ?string $driverFeeCutOverride;     // null = use platform default
+    public string $businessName;              // → order.sender_name
+    public ?string $contactPhone;             // → order.sender_phone (business or owner fallback)
 }
 ```
-Built from a `MerchantProfile` (`MerchantRateContext::fromProfile($profile)`).
+Built from a `MerchantProfile` (`MerchantOrderContext::fromProfile($profile)` — reads
+`business_name` + `contactPhone()`). `PricingService`/`QuoteService` read only the rate
+fields; `CreationService` additionally reads the identity fields.
 
 ### 4.2 `PricingService::compute(...)`
 - **Commission predicate change (critical):** today commission is computed only for
   `OrderType::P2pSale`. Change to **sale orders** = `P2pSale || MerchantDelivery`. Without
   this, a merchant commission override exists but merchant commission still snapshots as `0`.
-- Accept an optional `?MerchantRateContext`. When present, its overrides **replace** the
+- Accept an optional `?MerchantOrderContext`. When present, its overrides **replace** the
   `PlatformSetting::get('pricing.item_commission_rate')` / `pricing.driver_fee_cut_rate`
   lookups — this is the §4.3 "Merchant Override" layer.
 - Driver fee cut already applies to all order types; the override simply substitutes the rate.
 
 ### 4.3 `QuoteService::quote(...)`
-- Accept the optional `?MerchantRateContext`, forward to `compute()`.
+- Accept the optional `?MerchantOrderContext`, forward to `compute()`.
 - **Add to the signed token payload:** `commission_rate`, `driver_fee_cut_rate`, and
   `merchant_profile_id`. Today the token snapshots only the *amounts*; for `item_price = 0`
   the commission amount is `0` regardless of rate, so a rate change is invisible unless the
   rate itself is in the token.
 
 ### 4.4 `CreationService`
-- `create()` accepts an optional `?MerchantRateContext $merchant = null`. When present:
+- `create()` accepts an optional `?MerchantOrderContext $merchant = null`. When present:
   - skip `assertNotMerchantFlow` (the merchant *is* using the merchant flow);
   - set `order_type = merchant_delivery`, `merchant_profile_id`, `delivery_fee_payer = receiver`;
   - **`item_price` predicate change:** allow item_price for `P2pSale` **or**
     `MerchantDelivery` (today it's forced to `0.00` for non-P2P);
   - feed the context to pricing + quote re-verification.
-- **`assertQuoteMatchesRequest()` must compare the new fields** — extend the match-check
-  (currently type/size/price/payer/coords) to also assert the token's `commission_rate`,
-  `driver_fee_cut_rate`, and `merchant_profile_id` match the merchant context. Signing them
-  in the token is not enough; they must be verified.
-- **`assertQuotePriceStillCurrent()` must pass the merchant context** when it regenerates a
-  mismatch quote through `QuoteService` — otherwise the fresh quote silently uses platform
-  defaults and every merchant create with an override would 422.
+- **Split the two checks by semantics — they throw different errors:**
+  - `assertQuoteMatchesRequest()` is the *token-identity* check (mismatch ⇒ `InvalidQuoteToken`
+    / **400**, "wrong/tampered token"). Add **`merchant_profile_id`** here: the token must be
+    for *this* merchant. Do **not** put the rates here — a stale rate is not a bad token.
+  - `assertQuotePriceStillCurrent()` is the *price-moved* check (mismatch ⇒ `QuotePriceChanged`
+    / **409**). It must **pass the merchant context** so the fresh recompute uses the overrides,
+    and it must **compare `commission_rate` + `driver_fee_cut_rate`** (token vs. fresh). An
+    override edited inside the quote window is correctly surfaced as a 409 price change — and
+    without passing the context, the fresh quote would silently use platform defaults and every
+    merchant create with an override would falsely 409.
 
 ---
 
@@ -145,19 +155,22 @@ guard against committed state → write.
 
 - **Create:** the admin first hits `lookup?phone=` to resolve a user, then POSTs with
   `user_public_id` (Critical Rule 11 — accept `public_id`, never an internal id). The service
-  sets `status = active`, `approved_at = now()`, `approved_by_admin_id`, `created_by_admin_id`,
-  plus business fields/overrides/default pickup, and **assigns the Spatie `merchant` role**
-  (the role is seeded in `RolesSeeder`; driver approval assigns its role the same way).
-  The existing-profile resolution uses `MerchantProfile::withTrashed()` because `user_id` is
-  `unique` across *all* rows (live + soft-deleted), and proceeds by case:
-  - **Live profile exists** (`active` / `suspended` / `banned`, `deleted_at IS NULL`) →
-    `AlreadyMerchant` (reject — any live row blocks the unique index);
-  - **Soft-deleted, non-banned** profile exists → **restore + reactivate** it (don't error,
-    don't violate the unique index);
-  - **Soft-deleted, `banned`** profile exists → `AlreadyMerchant` (do **not** restore — that
-    would resurrect a terminal `banned` state; ban is forever per Decision #7);
-  - **No row** → `UserNotFound` if the target user doesn't exist; `AccountNotEligible` if the
-    target account is `banned`; otherwise create fresh.
+  runs guards in this **strict order** (the account-eligibility check precedes any profile
+  inspect/restore, so a banned user can never be reactivated through a trashed profile):
+  1. **Resolve user** → `UserNotFound` if the target doesn't exist.
+  2. **Account eligibility** → `AccountNotEligible` if the target account is `banned`.
+  3. **Inspect the existing profile via `MerchantProfile::withTrashed()`** (`user_id` is
+     `unique` across *all* rows — live + soft-deleted):
+     - **Live profile** (`active` / `suspended` / `banned`, `deleted_at IS NULL`) →
+       `AlreadyMerchant` (any live row blocks the unique index);
+     - **Soft-deleted, `banned`** → `AlreadyMerchant` (do **not** restore — that would
+       resurrect a terminal `banned` state; ban is forever per Decision #7);
+     - **Soft-deleted, non-banned** → **restore + reactivate** it (don't error, don't violate
+       the unique index);
+     - **No row** → create fresh.
+  4. On create/restore: set `status = active`, `approved_at = now()`, `approved_by_admin_id`,
+     `created_by_admin_id`, business fields/overrides/default pickup, and **assign the Spatie
+     `merchant` role** (seeded in `RolesSeeder`; driver approval assigns its role the same way).
 - **Lifecycle:** `suspend` (active→suspended), `reactivate` (suspended→active),
   `ban` (active|suspended→banned, terminal). `InvalidStatusTransition` otherwise. The
   `merchant` role stays assigned through suspend/reactivate; on `ban` the role is removed.
@@ -208,7 +221,7 @@ Merchant entry point. Re-asserts active merchant (`MerchantNotActive`), then:
   valid at onboarding can later fall in a deactivated area.
 - Build the create input: `order_type = merchant_delivery`, optional `item_price`,
   `delivery_fee_payer = receiver` (fixed), receiver by phone (registered or guest, as P2P).
-- Delegate to `CreationService::create($merchantUser, $input, $idempotencyKey, MerchantRateContext::fromProfile($profile))`.
+- Delegate to `CreationService::create($merchantUser, $input, $idempotencyKey, MerchantOrderContext::fromProfile($profile))`.
 
 ### 6.4 Order snapshot
 - `sender_user_id = merchant user id` (settlement/realtime ownership) **and**
@@ -256,8 +269,10 @@ Localized strings: `lang/en/merchant_messages.php` + `lang/ar/merchant_messages.
   `CodeVerificationService` at delivery, never at create);
 - `item_price = 0`, then deliver → **no** `seller_earning`;
 - merchant commission override **applied and snapshotted** on the order at create;
-- **override changed after quote → merchant quote mismatch (422)**, including the
-  `item_price = 0` case (proves rates-in-token + the `assertQuoteMatchesRequest` comparison work);
+- **override changed after quote → `QuotePriceChanged` (409)** via `assertQuotePriceStillCurrent`,
+  including the `item_price = 0` case (proves rates-in-token + the price-moved comparison work);
+- **wrong-merchant token → `InvalidQuoteToken` (400)** via `assertQuoteMatchesRequest`
+  (`merchant_profile_id` mismatch);
 - suspended / non-merchant blocked (`MerchantNotActive`);
 - pickup all-or-nothing (partial per-order pickup rejected; full default used; neither →
   `MissingPickup`; deactivated service area rejected);
