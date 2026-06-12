@@ -1,0 +1,305 @@
+# Merchant Deliveries (sub-project E) — Design
+
+**Date:** 2026-06-12
+**Status:** Approved — ready for implementation plan
+**Spec refs:** SYSTEM_SPECIFICATION.md §3.3 (Merchant Delivery), §4.2–4.6 (commission, rate hierarchy, fee payer, item price)
+
+---
+
+## 1. Goal & Scope
+
+Ship the **merchant delivery** order type end to end: an admin onboards a business as a
+merchant, and that merchant creates `merchant_delivery` orders (shop → customer) that flow
+through the existing order/driver/settlement pipeline.
+
+The schema already exists (`merchant_profiles`, `OrderType::MerchantDelivery`,
+`orders.merchant_profile_id`, the `MerchantDelivery` branch in settlement). The missing
+piece is the **entire HTTP + service surface** plus a handful of surgical edits to shared
+pricing/quote/creation code so merchant economics actually compute.
+
+**Two slices, one milestone:**
+
+- **Slice A — Onboarding (admin-facing):** CRUD + lifecycle for `merchant_profiles`.
+- **Slice B — Order creation (merchant-facing):** active merchants quote + create
+  `merchant_delivery` orders; merchants view their own orders.
+
+**Out of scope:** merchant self-application/registration; merchant catalog/inventory;
+digital pre-payment; merchant-facing settlement UI beyond the existing seller-payout
+endpoints (a merchant *is* a seller and already has `/api/me/earnings` + `/api/me/seller-payouts`).
+
+---
+
+## 2. Locked Decisions
+
+| # | Decision | Rationale |
+|---|---|---|
+| 1 | Build **both** slices this milestone (one spec). | Order flow is the blocked deliverable; onboarding is its prerequisite. |
+| 2 | Onboarding is **admin invite-only, create-directly-active**. | Matches the `created_by_admin_id` / "invite-only" migration intent; the `pending` enum value stays defined but unused by this flow. |
+| 3 | `MerchantStatus` is an **independent merchant lever** (separate from account moderation). | Mirrors how `DriverStatus` is independent of `AccountStatus`. An admin can pause a merchant's selling without touching the personal account. |
+| 4 | Merchant orders carry an **optional `item_price`** (sale vs. pure fulfillment). | Spec §3.3 + the settlement hook (`seller_earnings` spawns only when `item_price > 0`). |
+| 5 | **Receiver always pays** the delivery fee (spec §4.4) — no `delivery_fee_payer` input in the merchant flow; fixed server-side, including pure-fulfillment `item_price = 0`. | Spec-literal. |
+| 6 | Merchant lifecycle audit = **minimal** (status + `approved_at/by` + `notes`); no new audit table. | Invite-only, low volume. |
+| 7 | **Ban is terminal** on the merchant-profile axis (no un-ban). | Suspend is the reversible lever. Distinct from account-moderation `banned`, which stays admin-reversible. |
+| 8 | Pipeline structure = **Approach A**: dedicated `merchant/*` endpoints + dedicated services that **reuse** the existing pricing/quote/creation/settlement internals via a threaded merchant-rate context. | Isolation at the entry point, reuse of the transactional core; matches the codebase's per-actor endpoint split. |
+
+---
+
+## 3. Architecture
+
+```
+Slice A  (admin)                     Slice B  (merchant)
+  admin/merchants/*                    merchant/orders/*
+  MerchantOnboardingService            MerchantOrderCreationService
+    sole writer of merchant_profiles     resolves pickup + merchant context,
+    lock+reload+guard in txn             builds input, delegates the write to
+                                         CreationService (existing core)
+                                              │
+                              reuses ─────────┼───────────────────────────────
+                              PricingService  (+ MerchantOrderContext, sale-order commission)
+                              QuoteService    (+ context, rates in payload)
+                              CreationService (+ optional context, item_price for merchant)
+                              CodeVerificationService / StateTransitionService — UNCHANGED
+                              Settlement + seller-payouts — UNCHANGED
+```
+
+**Why settlement is free:** `seller_earnings.seller_user_id = order.sender_user_id`
+(`CodeVerificationService::spawnSellerEarning`). A merchant order's sender **is** the
+merchant's own user, so the existing settlement → clearance → seller-payout pipeline pays
+merchants with zero changes. `merchant_profile_id` is an *additional* dimension on the
+order, never a replacement for `sender_user_id`.
+
+---
+
+## 4. Shared-Code Changes (the only edits outside new files)
+
+These are threaded as an **optional merchant context** so the customer/P2P path passes
+`null` and is behaviorally unchanged.
+
+### 4.1 `MerchantOrderContext` value object (new, `app/ValueObjects/`)
+Immutable carrier for the merchant dimension through pricing/quote/creation. It carries the
+rate overrides **and** the business identity, because `CreationService` writes
+`sender_name`/`sender_phone` from the caller and must use the *business* identity for a
+merchant order (not the owner's personal name/phone):
+```
+final readonly class MerchantOrderContext {
+    public int $merchantProfileId;
+    public ?string $commissionRateOverride;   // null = use platform default
+    public ?string $driverFeeCutOverride;     // null = use platform default
+    public string $businessName;              // → order.sender_name
+    public ?string $contactPhone;             // → order.sender_phone (business or owner fallback)
+}
+```
+Built from a `MerchantProfile` (`MerchantOrderContext::fromProfile($profile)` — reads
+`business_name` + `contactPhone()`). `PricingService`/`QuoteService` read only the rate
+fields; `CreationService` additionally reads the identity fields.
+
+### 4.2 `PricingService::compute(...)`
+- **Commission predicate change (critical):** today commission is computed only for
+  `OrderType::P2pSale`. Change to **sale orders** = `P2pSale || MerchantDelivery`. Without
+  this, a merchant commission override exists but merchant commission still snapshots as `0`.
+- Accept an optional `?MerchantOrderContext`. When present, its overrides **replace** the
+  `PlatformSetting::get('pricing.item_commission_rate')` / `pricing.driver_fee_cut_rate`
+  lookups — this is the §4.3 "Merchant Override" layer.
+- Driver fee cut already applies to all order types; the override simply substitutes the rate.
+
+### 4.3 `QuoteService::quote(...)`
+- Accept the optional `?MerchantOrderContext`, forward to `compute()`.
+- **Add to the signed token payload:** `commission_rate`, `driver_fee_cut_rate`, and
+  `merchant_profile_id`. Today the token snapshots only the *amounts*; for `item_price = 0`
+  the commission amount is `0` regardless of rate, so a rate change is invisible unless the
+  rate itself is in the token.
+
+### 4.4 `CreationService`
+- `create()` accepts an optional `?MerchantOrderContext $merchant = null`. When present:
+  - skip `assertNotMerchantFlow` (the merchant *is* using the merchant flow);
+  - set `order_type = merchant_delivery`, `merchant_profile_id`, `delivery_fee_payer = receiver`;
+  - **`item_price` predicate change:** allow item_price for `P2pSale` **or**
+    `MerchantDelivery` (today it's forced to `0.00` for non-P2P);
+  - feed the context to pricing + quote re-verification.
+- **Split the two checks by semantics — they throw different errors:**
+  - `assertQuoteMatchesRequest()` is the *token-identity* check (mismatch ⇒ `InvalidQuoteToken`
+    / **400**, "wrong/tampered token"). Add **`merchant_profile_id`** here: the token must be
+    for *this* merchant. Do **not** put the rates here — a stale rate is not a bad token.
+  - `assertQuotePriceStillCurrent()` is the *price-moved* check (mismatch ⇒ `QuotePriceChanged`
+    / **409**). It must **pass the merchant context** so the fresh recompute uses the overrides,
+    and it must **compare `commission_rate` + `driver_fee_cut_rate`** (token vs. fresh). An
+    override edited inside the quote window is correctly surfaced as a 409 price change — and
+    without passing the context, the fresh quote would silently use platform defaults and every
+    merchant create with an override would falsely 409.
+
+---
+
+## 5. Slice A — Merchant Onboarding (admin)
+
+### 5.1 Endpoints
+All `auth:sanctum + role:admin + staff.password_change_required + MerchantProfilePolicy`,
+`public_id`-bound, mirroring the staff/moderation groups. The
+`staff.password_change_required` middleware is **mandatory on every authenticated group** in
+this codebase (a temp-password admin must not bypass the gate).
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/admin/merchants` | GET | List/filter by status (paginated) |
+| `/api/admin/merchants/lookup?phone=` | GET | Find a user to onboard (anti-enumeration) |
+| `/api/admin/merchants` | POST | Create **active** merchant for an existing user |
+| `/api/admin/merchants/{merchant}` | GET | Show |
+| `/api/admin/merchants/{merchant}` | PATCH | Update business details / overrides / default pickup |
+| `/api/admin/merchants/{merchant}/suspend` | POST | active → suspended |
+| `/api/admin/merchants/{merchant}/reactivate` | POST | suspended → active |
+| `/api/admin/merchants/{merchant}/ban` | POST | active\|suspended → banned (terminal) |
+
+### 5.2 `MerchantOnboardingService` — sole writer of `merchant_profiles`
+Follows the established **lock+reload+guard-in-txn** pattern (Critical Rule 3, as in
+`AccountModerationService`/`StaffService`): open txn → `lockForUpdate()` the target →
+guard against committed state → write.
+
+- **Create:** the admin first hits `lookup?phone=` to resolve a user, then POSTs with
+  `user_public_id` (Critical Rule 11 — accept `public_id`, never an internal id). The service
+  runs guards in this **strict order** (the account-eligibility check precedes any profile
+  inspect/restore, so a banned user can never be reactivated through a trashed profile):
+  1. **Resolve user** → `UserNotFound` if the target doesn't exist.
+  2. **Account eligibility** → `AccountNotEligible` if the target account is `banned`.
+  3. **Inspect the existing profile via `MerchantProfile::withTrashed()`** (`user_id` is
+     `unique` across *all* rows — live + soft-deleted):
+     - **Live profile** (`active` / `suspended` / `banned`, `deleted_at IS NULL`) →
+       `AlreadyMerchant` (any live row blocks the unique index);
+     - **Soft-deleted, `banned`** → `AlreadyMerchant` (do **not** restore — that would
+       resurrect a terminal `banned` state; ban is forever per Decision #7);
+     - **Soft-deleted, non-banned** → **restore + reactivate** it (don't error, don't violate
+       the unique index);
+     - **No row** → create fresh.
+  4. On create/restore: set `status = active`, `approved_at = now()`, `approved_by_admin_id`,
+     `created_by_admin_id`, business fields/overrides/default pickup, and **assign the Spatie
+     `merchant` role** (seeded in `RolesSeeder`; driver approval assigns its role the same way).
+- **Lifecycle:** `suspend` (active→suspended), `reactivate` (suspended→active),
+  `ban` (active|suspended→banned, terminal). `InvalidStatusTransition` otherwise. The
+  `merchant` role stays assigned through suspend/reactivate; on `ban` the role is removed.
+
+### 5.3 Supporting pieces
+- **`MerchantProfilePolicy`** (admin-only). Named for the `MerchantProfile` model so Laravel
+  **auto-discovers** it (non-model-named policies must be explicitly registered in
+  `AppServiceProvider::boot` via `Gate::policy(...)`; avoid that by naming it for the model).
+- `StoreMerchantRequest`, `UpdateMerchantRequest`, thin action requests (optional `notes`/reason).
+  Override validation: `commission_rate_override` and `driver_fee_cut_override` are
+  `nullable|decimal:0,4|min:0|max:1` (a rate is a fraction `0 ≤ r ≤ 1`, matching the
+  `decimal(5,4)` columns) — reject nonsensical snapshots at the boundary.
+- `MerchantResource` — `public_id` as `id`; owner as nested `{id, name}`
+  (public_id-safe, Critical Rule 11); `status`, overrides, default pickup, approval refs.
+- `MerchantProfileFactory` (new — none exists).
+- `MerchantErrorCode` enum + `MerchantException` (`httpStatus()`, rendered in `bootstrap/app.php`).
+
+---
+
+## 6. Slice B — Merchant Order Creation (merchant)
+
+### 6.1 Auth gate
+New `active.merchant` middleware: requires `$user->hasRole('merchant')` **and**
+`$user->merchantProfile?->status === MerchantStatus::Active` (the role is the coarse gate, the
+status the fine one — a suspended/banned merchant keeps the role only until ban). Aliased in
+`bootstrap/app.php`, mirroring how `role:driver` gates driver routes.
+
+### 6.2 Endpoints (`auth:sanctum + staff.password_change_required + active.merchant`)
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/merchant/orders/quote` | POST | Price a merchant delivery (forces `merchant_delivery`, applies overrides) |
+| `/api/merchant/orders` | POST | Create the order (`phone-verified` like `/api/orders`) |
+| `/api/merchant/orders` | GET | Merchant lists **own** orders — `Order::forMerchant($merchantProfileId)` |
+| `/api/merchant/orders/{public_id}` | GET | Merchant views one own order — scoped by `merchant_profile_id` |
+
+> **Scope by `merchant_profile_id`, not `OrderPolicy::view`** — the sender policy would also
+> surface the same user's *personal* (non-merchant) orders.
+
+### 6.3 `MerchantOrderCreationService`
+Merchant entry point. Re-asserts active merchant (`MerchantNotActive`), then:
+- **Pickup resolution (all-or-nothing):** a per-order pickup must supply **both** `address`
+  **and** `location` (reject a partial one in the FormRequest); if the request omits pickup
+  entirely, fall back to **both** profile defaults (`default_pickup_address` +
+  `default_pickup_location`) together. If neither a complete per-order pickup nor a complete
+  default is available → `MissingPickup`. **The resolved pickup (including a stored default)
+  is validated against the active service area at order time** (Critical Rule 16) — a default
+  valid at onboarding can later fall in a deactivated area.
+- Build the create input: `order_type = merchant_delivery`, optional `item_price`,
+  `delivery_fee_payer = receiver` (fixed), receiver by phone (registered or guest, as P2P).
+- Delegate to `CreationService::create($merchantUser, $input, $idempotencyKey, MerchantOrderContext::fromProfile($profile))`.
+
+### 6.4 Order snapshot
+- `sender_user_id = merchant user id` (settlement/realtime ownership) **and**
+  `merchant_profile_id` set (merchant dimension).
+- **Display identity uses the business:** `sender_name = business_name`,
+  `sender_phone = contactPhone()` (business phone, falling back to the owner's personal phone).
+
+### 6.5 Settlement & realtime (unchanged, stated precisely)
+- `seller_earnings` auto-spawns for `merchant_delivery` + `item_price > 0`, settling to the
+  merchant's user. `item_price = 0` → no earning (pure fulfillment).
+- Merchant order **status** events remain on `private:order.{order_public_id}` (sender/receiver).
+- Seller-earning **clearance** remains on `private:user.{merchant_user_public_id}`.
+- No order event fires on the merchant's user channel.
+
+---
+
+## 7. Error Handling
+
+`MerchantErrorCode` enum → HTTP via `httpStatus()`, rendered centrally in `bootstrap/app.php`
+(same pattern as `StaffErrorCode`/`ModerationErrorCode`):
+
+| Case | HTTP | When |
+|---|---|---|
+| `UserNotFound` | 404 | onboarding target user missing |
+| `AlreadyMerchant` | 422 | any **live** profile exists, or a **soft-deleted `banned`** one (non-banned soft-deleted → restored, no error) |
+| `AccountNotEligible` | 422 | onboarding a `banned` account |
+| `InvalidStatusTransition` | 422 | illegal merchant lifecycle move |
+| `MerchantNotActive` | 403 | non-active merchant hits the order flow |
+| `MissingPickup` | 422 | no per-order pickup and no profile default |
+
+Localized strings: `lang/en/merchant_messages.php` + `lang/ar/merchant_messages.php`.
+
+---
+
+## 8. Testing
+
+**Slice A** — `MerchantProfileFactory`; feature tests: create-active, lookup
+(anti-enumeration), suspend/reactivate, ban-terminal, guards (already-merchant /
+**soft-deleted restore** / banned-account / invalid-transition / admin-only);
+`MerchantOnboardingService` unit tests for the lock+guard paths.
+
+**Slice B** — feature tests:
+- merchant quote+create with `item_price > 0`, **then deliver** → `seller_earnings` row
+  spawns at delivery success and settles to the merchant (the row is created in
+  `CodeVerificationService` at delivery, never at create);
+- `item_price = 0`, then deliver → **no** `seller_earning`;
+- merchant commission override **applied and snapshotted** on the order at create;
+- **override changed after quote → `QuotePriceChanged` (409)** via `assertQuotePriceStillCurrent`,
+  including the `item_price = 0` case (proves rates-in-token + the price-moved comparison work);
+- **wrong-merchant token → `InvalidQuoteToken` (400)** via `assertQuoteMatchesRequest`
+  (`merchant_profile_id` mismatch);
+- suspended / non-merchant blocked (`MerchantNotActive`);
+- pickup all-or-nothing (partial per-order pickup rejected; full default used; neither →
+  `MissingPickup`; deactivated service area rejected);
+- standard `/api/orders` still blocks an active merchant via `assertNotMerchantFlow`;
+- **merchant endpoints exclude non-merchant orders created by the same user.**
+
+**Smoke** — `tests/Feature/Smoke/MerchantDeliveryTest.php`: onboard → merchant creates order
+→ driver delivers → `seller_earning` → settlement → payout. Keeps the Pest-smoke convention.
+
+---
+
+## 9. Housekeeping (done first, on the milestone branch)
+
+Deferred from the test-infrastructure milestone:
+- Bump `composer.json` `"php": "^8.3"` → `"^8.4"` (locked Symfony 8 / collision 8.9 require
+  ≥8.4; dev + CI already run 8.4), then `composer validate`.
+- **Refresh `composer.lock` platform metadata** — its `platform`/`platform-overrides`
+  section currently records PHP `^8.3`; run `composer update --lock` (or equivalent) so the
+  lock's platform matches.
+- Document PHP 8.4 in `docs/CLAUDE.md` (TL;DR / Packages) and fix any "PHP 8.3" mention in
+  SYSTEM_SPEC §17.16.
+
+---
+
+## 10. Docs close-out (end of milestone)
+
+- SYSTEM_SPECIFICATION §17.17 "Merchant Deliveries milestone" + CLAUDE.md "Current Project
+  State" / "Next Steps".
+- Verify on the merged branch: full Pest suite green, Pint clean, new smoke green,
+  security review (no HIGH/MEDIUM).

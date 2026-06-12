@@ -10,6 +10,7 @@ use App\Enums\OrderType;
 use App\Exceptions\Order\OrderDomainException;
 use App\Models\PlatformSetting;
 use App\Models\Region;
+use App\ValueObjects\MerchantOrderContext;
 use Illuminate\Support\Facades\DB;
 
 final class PricingService
@@ -42,6 +43,7 @@ final class PricingService
         string $itemPrice,              // "0.00" for standard_delivery
         string $deliveryFeePayer,       // 'sender' | 'receiver'
         string $paymentMethod,          // 'cash' | 'wallet'
+        ?MerchantOrderContext $merchant = null,
     ): array {
         $region = $this->resolveRegion($pickupLng, $pickupLat);
 
@@ -68,13 +70,17 @@ final class PricingService
         $surchargePercent = 0;
         $fee = $base; // = base × (1 + 0/100)
 
-        // P2P commission
-        $commissionRate = $orderType === OrderType::P2pSale
-            ? (string) PlatformSetting::get('pricing.item_commission_rate', 0)
+        // Item commission applies to SALE orders (p2p_sale OR merchant_delivery).
+        // Rate hierarchy (spec §4.3): merchant override → platform default.
+        $isSale = $orderType === OrderType::P2pSale || $orderType === OrderType::MerchantDelivery;
+        $commissionRate = $isSale
+            ? ($merchant?->commissionRateOverride
+                ?? (string) PlatformSetting::get('pricing.item_commission_rate', 0))
             : '0';
         $commissionAmount = bcmul($itemPrice, $commissionRate, 2);
 
-        $driverCutRate = (string) PlatformSetting::get('pricing.driver_fee_cut_rate', 0.02);
+        $driverCutRate = $merchant?->driverFeeCutOverride
+            ?? (string) PlatformSetting::get('pricing.driver_fee_cut_rate', 0.02);
         $driverCutAmount = bcmul($base, $driverCutRate, 2);
 
         $cashAtDelivery = bcadd(

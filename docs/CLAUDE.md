@@ -13,7 +13,9 @@
 - **P2P sale** — seller→buyer, cash-on-delivery, platform takes commission
 - **Merchant delivery** — shop→customer, similar to P2P
 
-**Stack:** Laravel · PostgreSQL + PostGIS · Redis · Laravel Reverb · Spatie Permission · Spatie Media · Bavix Wallet · Sanctum
+**Stack:** PHP 8.4 · Laravel · PostgreSQL + PostGIS · Redis · Laravel Reverb · Spatie Permission · Spatie Media · Bavix Wallet · Sanctum
+
+> **Runtime floor: PHP 8.4** (`composer.json` `"php": "^8.4"`). Locked Symfony 8 / collision 8.9 require ≥8.4; dev + CI run 8.4.
 
 **Currency:** LYD only. `decimal(12, 2)`. **Market:** Libya — phone-first, Arabic-primary, cash-dominated.
 

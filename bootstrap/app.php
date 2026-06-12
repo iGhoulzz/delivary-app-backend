@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\Merchant\MerchantException;
 use App\Exceptions\Moderation\ModerationException;
 use App\Exceptions\Order\OrderDomainException;
 use App\Exceptions\Staff\StaffDomainException;
@@ -46,6 +47,10 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (ModerationException $e): JsonResponse {
+            return new JsonResponse($e->toResponse(), $e->httpStatus());
+        });
+
+        $exceptions->render(function (MerchantException $e): JsonResponse {
             return new JsonResponse($e->toResponse(), $e->httpStatus());
         });
     })->create();

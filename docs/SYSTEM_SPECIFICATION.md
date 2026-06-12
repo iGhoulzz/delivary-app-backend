@@ -1272,7 +1272,7 @@ Promoted the three Tinker smoke scripts to first-class Pest tests and added CI. 
 
 **Per-worktree test DB:** `phpunit.xml` keeps `delivary_app_testing` as a safe default with `force="false"`, so a worktree isolates itself by **exporting** `DB_DATABASE` before running Pest (verified: an exported var wins; `.env.testing` does not, because phpunit sets the var before Laravel loads it). `tests/Feature/Smoke/TestEnvironmentTest` guarantees tests never target the dev DB.
 
-**CI:** `.github/workflows/ci.yml` runs on push/PR against a `postgis/postgis` service container — `composer install` → `migrate` → `pint --test` → `pest`. Same suite, clean machine.
+**CI:** `.github/workflows/ci.yml` runs on push/PR against a `postgis/postgis` service container — `composer install` → `migrate` → `pint --test` → `pest`. Same suite, clean machine. Runs on **PHP 8.4** (locked Symfony 8 / collision 8.9 require ≥8.4); the `composer.json` floor was aligned to `"php": "^8.4"` during the Merchant Deliveries milestone.
 
 **Out of scope (deferred):** converting `scripts/realtime-smoke.php` (special broadcast/`$afterCommit` behavior — a separate `RealtimeSmokeTest` later); coverage thresholds.
 
