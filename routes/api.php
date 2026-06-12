@@ -55,6 +55,7 @@ use App\Http\Controllers\Api\Order\OrderController;
 use App\Http\Controllers\Api\Order\QuoteController;
 use App\Http\Controllers\Api\Profile\ProfileController;
 use App\Http\Controllers\Api\Tracking\GuestTrackingController;
+use App\Http\Controllers\Merchant\MerchantOrderController;
 use Illuminate\Support\Facades\Route;
 
 // ─── Auth ────────────────────────────────────────────────────────────────
@@ -135,6 +136,19 @@ Route::middleware(['auth:sanctum', 'staff.password_change_required'])->prefix('o
     Route::post('/', [OrderController::class, 'store'])
         ->middleware('throttle:orders_create');
 });
+
+// ─── /merchant/orders — merchant-facing order flow (active merchants only) ──
+Route::middleware(['auth:sanctum', 'staff.password_change_required', 'active.merchant'])
+    ->prefix('merchant/orders')
+    ->name('merchant.orders.')
+    ->group(function (): void {
+        Route::post('quote', [MerchantOrderController::class, 'quote'])
+            ->middleware('throttle:orders_quote')->name('quote');
+        Route::post('/', [MerchantOrderController::class, 'store'])
+            ->middleware('throttle:orders_create')->name('store');
+        Route::get('/', [MerchantOrderController::class, 'index'])->name('index');
+        Route::get('{order:public_id}', [MerchantOrderController::class, 'show'])->name('show');
+    });
 
 // ─── /office/drivers — office-staff driver onboarding ────────────────────
 Route::get('track/{trackingToken}', GuestTrackingController::class)

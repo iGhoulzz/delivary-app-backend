@@ -4,6 +4,7 @@ use App\Exceptions\Merchant\MerchantException;
 use App\Exceptions\Moderation\ModerationException;
 use App\Exceptions\Order\OrderDomainException;
 use App\Exceptions\Staff\StaffDomainException;
+use App\Http\Middleware\EnsureActiveMerchant;
 use App\Http\Middleware\EnsurePasswordChanged;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -32,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission' => PermissionMiddleware::class,
             'role_or_permission' => RoleOrPermissionMiddleware::class,
             'staff.password_change_required' => EnsurePasswordChanged::class,
+            'active.merchant' => EnsureActiveMerchant::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
