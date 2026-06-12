@@ -760,8 +760,8 @@ it('allows admins and denies everyone else', function () {
 'user_public_id' => ['required', 'string'],
 'business_name' => ['required', 'string', 'max:255'],
 'business_phone' => ['nullable', 'string', 'max:32'],
-'commission_rate_override' => ['nullable', 'numeric', 'min:0', 'max:1'],
-'driver_fee_cut_override' => ['nullable', 'numeric', 'min:0', 'max:1'],
+'commission_rate_override' => ['nullable', 'decimal:0,4', 'min:0', 'max:1'],
+'driver_fee_cut_override' => ['nullable', 'decimal:0,4', 'min:0', 'max:1'],
 'default_pickup_address' => ['nullable', 'string', 'max:1000'],
 'default_pickup_location' => ['nullable', 'array'],
 'default_pickup_location.lat' => ['required_with:default_pickup_location', 'numeric', 'between:-90,90'],
@@ -829,7 +829,7 @@ return DB::transaction(function () use ($admin, $data) {
     return $profile->load('user');
 });
 ```
-> `default_pickup_location` from `['lat','lng']` → `Point::makeGeodetic($lng,$lat)` (mirror CreationService pickup write). Confirm `AccountStatus` enum + `User::account_status` cast name.
+> `default_pickup_location` from `['lat','lng']` → **`Point::makeGeodetic($lat, $lng)`** — argument order is **(lat, lng)** in this codebase (`CreationService.php:121`, `TestWorld.php:44`, all test helpers: `makeGeodetic(32.8872 /*lat*/, 13.1913 /*lng*/)`). Do **not** pass `($lng, $lat)` — it silently swaps coordinates. Confirm `AccountStatus` enum + `User::account_status` cast name.
 
 **Lifecycle** — each opens a txn, `lockForUpdate()` + reload the `{merchant}`, guard the transition, write:
 ```php
@@ -901,25 +901,44 @@ Alias in `bootstrap/app.php` `->withMiddleware(fn ($m) => $m->alias([... 'active
 
 Entry point. Resolves pickup (all-or-nothing), builds the create input, delegates to `CreationService::create(..., MerchantOrderContext::fromProfile($profile))`.
 
+> **Pickup resolution is SHARED between quote and create** (Codex high finding): the quote endpoint also needs resolved pickup coordinates to price (the merchant may omit pickup and rely on the default). Put `resolvePickup()` as a **public** method on this service so `MerchantOrderController::quote` calls it *before* `QuoteService::quote(...)`. The quote then signs the *resolved* (possibly default) coordinates, and a merchant with no pickup + no default gets `MissingPickup` at quote time, not a confusing pricing error.
+
 ```php
 public function __construct(private readonly CreationService $creation) {}
 
 public function create(User $merchantUser, array $input, ?string $idempotencyKey = null): Order
 {
-    $profile = $merchantUser->merchantProfile;
-    if ($profile === null || $profile->status !== MerchantStatus::Active) {
-        throw new MerchantException(MerchantErrorCode::MerchantNotActive, trans('merchant_messages.merchant_not_active'));
-    }
+    $profile = $this->requireActiveProfile($merchantUser);
     $input = $this->resolvePickup($input, $profile);          // fills pickup_address + pickup_location or throws MissingPickup
     $input['order_type'] = OrderType::MerchantDelivery->value;
     return $this->creation->create($merchantUser, $input, $idempotencyKey, MerchantOrderContext::fromProfile($profile));
 }
+
+public function requireActiveProfile(User $merchantUser): MerchantProfile
+{
+    $profile = $merchantUser->merchantProfile;
+    if ($profile === null || $profile->status !== MerchantStatus::Active) {
+        throw new MerchantException(MerchantErrorCode::MerchantNotActive, trans('merchant_messages.merchant_not_active'));
+    }
+    return $profile;
+}
 ```
 
-**`resolvePickup`** — all-or-nothing (spec §6.3):
+**`public function resolvePickup(array $input, MerchantProfile $profile): array`** — all-or-nothing, and it must **reject a partial per-order pickup** rather than silently fall back to the default (Codex medium finding; the FormRequest also guards this, but the service is unit-tested with partial input and must not default):
 ```php
-$hasOrderPickup = isset($input['pickup_address'], $input['pickup_location']['lat'], $input['pickup_location']['lng']);
-if ($hasOrderPickup) { return $input; }                       // a partial one is rejected at the FormRequest layer
+$addr = $input['pickup_address'] ?? null;
+$lat  = $input['pickup_location']['lat'] ?? null;
+$lng  = $input['pickup_location']['lng'] ?? null;
+$anyPresent  = $addr !== null || $lat !== null || $lng !== null;
+$allPresent  = $addr !== null && $lat !== null && $lng !== null;
+
+if ($anyPresent && ! $allPresent) {                           // partial → never default-fall-through
+    throw new MerchantException(MerchantErrorCode::MissingPickup, trans('merchant_messages.missing_pickup'));
+}
+if ($allPresent) {
+    return $input;                                            // complete per-order pickup
+}
+// none present → fall back to the profile default (both fields, or neither)
 if ($profile->default_pickup_address !== null && $profile->default_pickup_location !== null) {
     $input['pickup_address'] = $profile->default_pickup_address;
     $input['pickup_location'] = [
@@ -932,20 +951,32 @@ throw new MerchantException(MerchantErrorCode::MissingPickup, trans('merchant_me
 ```
 > Service-area validation of the resolved pickup happens automatically inside `PricingService::resolveRegion()` (called by the quote/create flow) — it throws `PickupOutOfServiceArea` if the (possibly default) pickup falls outside an active region. No extra code; assert it in a test.
 
-- [ ] **TDD:** uses order pickup when given; uses profile default when omitted; partial/none → `MissingPickup`; default in a deactivated region → `PickupOutOfServiceArea`. Commit.
+- [ ] **TDD:** uses order pickup when complete; uses profile default when omitted; **partial per-order pickup → `MissingPickup`** (not silent default); none + no default → `MissingPickup`; default in a deactivated region → `PickupOutOfServiceArea`. Commit.
 
 ### Task B.3: Merchant order requests (quote + create)
 
 **Files:** Create `app/Http/Requests/Merchant/QuoteMerchantOrderRequest.php`, `StoreMerchantOrderRequest.php`.
 
-Mirror the existing order quote/create FormRequests, but: `order_type` is **not** a client field (forced to `merchant_delivery`); **no** `delivery_fee_payer` field (forced receiver); `item_price` is `nullable|numeric|min:0`; pickup is **all-or-nothing**:
+Mirror the existing order quote/create FormRequests, but: `order_type` is **not** a client field (forced to `merchant_delivery`); **no** `delivery_fee_payer` field (forced receiver); `item_price` is `['nullable', 'numeric', 'min:0', 'max:99999999.99']` (the `max` keeps it inside the `decimal(12,2)` `orders.item_price` column — mirror the existing order request); pickup is **all-or-nothing**:
 ```php
-'pickup_address' => ['required_with:pickup_location', 'nullable', 'string'],
+'pickup_address' => ['required_with:pickup_location', 'nullable', 'string', 'max:500'],
 'pickup_location' => ['required_with:pickup_address', 'nullable', 'array'],
 'pickup_location.lat' => ['required_with:pickup_location', 'numeric', 'between:-90,90'],
 'pickup_location.lng' => ['required_with:pickup_location', 'numeric', 'between:-180,180'],
 ```
-(If neither pickup field is present, the service falls back to the profile default — valid.) Create request additionally requires `quote_token`, `receiver_*`, `item_size`.
+(If neither pickup field is present, the service falls back to the profile default — valid. A *partial* per-order pickup is rejected both here via `required_with` and defensively in `resolvePickup`.) Create request additionally requires `quote_token`, `receiver_*`, `item_size`, `item_description`.
+
+**`StoreMerchantOrderRequest::authorize()` must replicate the order-create guard** (Codex high finding — `POST /api/orders` has **no** phone-verified middleware; the guard lives in `CreateOrderRequest::authorize()`):
+```php
+public function authorize(): bool
+{
+    $user = $this->user();
+    return $user !== null
+        && $user->phone_verified_at !== null
+        && $user->canCreateOrders();
+}
+```
+The `active.merchant` route middleware only checks merchant role/status — it does **not** cover phone verification or `canCreateOrders()`.
 
 - [ ] Commit `feat(merchant): merchant order quote/create requests`.
 
@@ -953,7 +984,7 @@ Mirror the existing order quote/create FormRequests, but: `order_type` is **not*
 
 **Files:** Create `app/Http/Controllers/Merchant/MerchantOrderController.php`; Test `tests/Feature/Merchant/MerchantOrderTest.php`.
 
-- `quote` → builds `MerchantOrderContext::fromProfile($request->user()->merchantProfile)`, calls `QuoteService::quote(..., $ctx)`, returns the pricing+token (mirror the existing quote controller).
+- `quote` → `$profile = $svc->requireActiveProfile($request->user())`; **`$resolved = $svc->resolvePickup($request->validated(), $profile)`** (so a defaulted pickup is priced, or `MissingPickup` is thrown before pricing); build `MerchantOrderContext::fromProfile($profile)`; call `QuoteService::quote(...)` with the resolved pickup coords + context; return pricing+token (mirror the existing quote controller). Inject `MerchantOrderCreationService $svc` for the shared resolver.
 - `store` → `MerchantOrderCreationService::create($request->user(), $validated, $idempotencyKey)` → `OrderResource`.
 - `index` → `Order::forMerchant($profileId)->paginate()` → `OrderResource::collection` (scope by merchant_profile_id, NOT OrderPolicy::view).
 - `show` → resolve `{order:public_id}` then assert `$order->merchant_profile_id === $request->user()->merchantProfile->id` (404/403 otherwise) → `OrderResource`.
@@ -962,12 +993,12 @@ Mirror the existing order quote/create FormRequests, but: `order_type` is **not*
 
 ### Task B.5: Routes
 
-**Files:** Modify `routes/api.php` — append, mirroring the `POST /api/orders` middleware (copy the exact phone-verified middleware that guards order creation):
+**Files:** Modify `routes/api.php` — append. The middleware matches the `POST /api/orders` group (`auth:sanctum` + `staff.password_change_required`) plus `active.merchant`. There is **no** phone-verified middleware — phone verification + `canCreateOrders()` are enforced by `StoreMerchantOrderRequest::authorize()` (Task B.3), exactly as `CreateOrderRequest` does for `/api/orders`. Apply the existing `throttle:orders_quote` / `throttle:orders_create` limiters to match the order routes:
 ```php
 Route::middleware(['auth:sanctum', 'staff.password_change_required', 'active.merchant'])
     ->prefix('merchant/orders')->group(function (): void {
-        Route::post('quote', [MerchantOrderController::class, 'quote']);
-        Route::post('/', [MerchantOrderController::class, 'store']);          // + phone-verified middleware, like POST /api/orders
+        Route::post('quote', [MerchantOrderController::class, 'quote'])->middleware('throttle:orders_quote');
+        Route::post('/', [MerchantOrderController::class, 'store'])->middleware('throttle:orders_create');
         Route::get('/', [MerchantOrderController::class, 'index']);
         Route::get('{order:public_id}', [MerchantOrderController::class, 'show']);
     });
