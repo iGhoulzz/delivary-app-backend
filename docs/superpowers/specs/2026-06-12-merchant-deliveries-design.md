@@ -95,12 +95,12 @@ Built from a `MerchantProfile` (`MerchantRateContext::fromProfile($profile)`).
   lookups — this is the §4.3 "Merchant Override" layer.
 - Driver fee cut already applies to all order types; the override simply substitutes the rate.
 
-### 4.3 `QuoteService::make(...)`
+### 4.3 `QuoteService::quote(...)`
 - Accept the optional `?MerchantRateContext`, forward to `compute()`.
-- **Add to the signed payload + the match-check:** `commission_rate`, `driver_fee_cut_rate`,
-  and `merchant_profile_id`. Today the token snapshots only the *amounts*; for
-  `item_price = 0` the commission amount is `0` regardless of rate, so a rate change is
-  invisible unless the rate itself is in the token.
+- **Add to the signed token payload:** `commission_rate`, `driver_fee_cut_rate`, and
+  `merchant_profile_id`. Today the token snapshots only the *amounts*; for `item_price = 0`
+  the commission amount is `0` regardless of rate, so a rate change is invisible unless the
+  rate itself is in the token.
 
 ### 4.4 `CreationService`
 - `create()` accepts an optional `?MerchantRateContext $merchant = null`. When present:
@@ -109,7 +109,11 @@ Built from a `MerchantProfile` (`MerchantRateContext::fromProfile($profile)`).
   - **`item_price` predicate change:** allow item_price for `P2pSale` **or**
     `MerchantDelivery` (today it's forced to `0.00` for non-P2P);
   - feed the context to pricing + quote re-verification.
-- `assertQuotePriceStillCurrent()` must **pass the merchant context** when it regenerates a
+- **`assertQuoteMatchesRequest()` must compare the new fields** — extend the match-check
+  (currently type/size/price/payer/coords) to also assert the token's `commission_rate`,
+  `driver_fee_cut_rate`, and `merchant_profile_id` match the merchant context. Signing them
+  in the token is not enough; they must be verified.
+- **`assertQuotePriceStillCurrent()` must pass the merchant context** when it regenerates a
   mismatch quote through `QuoteService` — otherwise the fresh quote silently uses platform
   defaults and every merchant create with an override would 422.
 
@@ -118,7 +122,10 @@ Built from a `MerchantProfile` (`MerchantRateContext::fromProfile($profile)`).
 ## 5. Slice A — Merchant Onboarding (admin)
 
 ### 5.1 Endpoints
-All `sanctum + role:admin + MerchantPolicy`, `public_id`-bound, mirroring staff/moderation.
+All `auth:sanctum + role:admin + staff.password_change_required + MerchantProfilePolicy`,
+`public_id`-bound, mirroring the staff/moderation groups. The
+`staff.password_change_required` middleware is **mandatory on every authenticated group** in
+this codebase (a temp-password admin must not bypass the gate).
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -139,18 +146,30 @@ guard against committed state → write.
 - **Create:** the admin first hits `lookup?phone=` to resolve a user, then POSTs with
   `user_public_id` (Critical Rule 11 — accept `public_id`, never an internal id). The service
   sets `status = active`, `approved_at = now()`, `approved_by_admin_id`, `created_by_admin_id`,
-  plus business fields/overrides/default pickup. Guards:
-  - `UserNotFound` — target user does not exist;
-  - `AlreadyMerchant` — **checked via `MerchantProfile::withTrashed()`** because `user_id`
-    is `unique` and the model soft-deletes. If a **soft-deleted** profile exists for the
-    user, **restore + reactivate** it (don't error, don't violate the unique index);
-  - `AccountNotEligible` — target account is `banned` (don't onboard a banned account).
+  plus business fields/overrides/default pickup, and **assigns the Spatie `merchant` role**
+  (the role is seeded in `RolesSeeder`; driver approval assigns its role the same way).
+  The existing-profile resolution uses `MerchantProfile::withTrashed()` because `user_id` is
+  `unique` across *all* rows (live + soft-deleted), and proceeds by case:
+  - **Live profile exists** (`active` / `suspended` / `banned`, `deleted_at IS NULL`) →
+    `AlreadyMerchant` (reject — any live row blocks the unique index);
+  - **Soft-deleted, non-banned** profile exists → **restore + reactivate** it (don't error,
+    don't violate the unique index);
+  - **Soft-deleted, `banned`** profile exists → `AlreadyMerchant` (do **not** restore — that
+    would resurrect a terminal `banned` state; ban is forever per Decision #7);
+  - **No row** → `UserNotFound` if the target user doesn't exist; `AccountNotEligible` if the
+    target account is `banned`; otherwise create fresh.
 - **Lifecycle:** `suspend` (active→suspended), `reactivate` (suspended→active),
-  `ban` (active|suspended→banned, terminal). `InvalidStatusTransition` otherwise.
+  `ban` (active|suspended→banned, terminal). `InvalidStatusTransition` otherwise. The
+  `merchant` role stays assigned through suspend/reactivate; on `ban` the role is removed.
 
 ### 5.3 Supporting pieces
-- `MerchantPolicy` (admin-only).
+- **`MerchantProfilePolicy`** (admin-only). Named for the `MerchantProfile` model so Laravel
+  **auto-discovers** it (non-model-named policies must be explicitly registered in
+  `AppServiceProvider::boot` via `Gate::policy(...)`; avoid that by naming it for the model).
 - `StoreMerchantRequest`, `UpdateMerchantRequest`, thin action requests (optional `notes`/reason).
+  Override validation: `commission_rate_override` and `driver_fee_cut_override` are
+  `nullable|decimal:0,4|min:0|max:1` (a rate is a fraction `0 ≤ r ≤ 1`, matching the
+  `decimal(5,4)` columns) — reject nonsensical snapshots at the boundary.
 - `MerchantResource` — `public_id` as `id`; owner as nested `{id, name}`
   (public_id-safe, Critical Rule 11); `status`, overrides, default pickup, approval refs.
 - `MerchantProfileFactory` (new — none exists).
@@ -161,10 +180,12 @@ guard against committed state → write.
 ## 6. Slice B — Merchant Order Creation (merchant)
 
 ### 6.1 Auth gate
-New `active.merchant` gate/middleware: `$user->merchantProfile?->status === MerchantStatus::Active`.
-Mirrors how `role:driver` gates driver routes. Registered in `bootstrap/app.php`.
+New `active.merchant` middleware: requires `$user->hasRole('merchant')` **and**
+`$user->merchantProfile?->status === MerchantStatus::Active` (the role is the coarse gate, the
+status the fine one — a suspended/banned merchant keeps the role only until ban). Aliased in
+`bootstrap/app.php`, mirroring how `role:driver` gates driver routes.
 
-### 6.2 Endpoints (`sanctum + active.merchant`)
+### 6.2 Endpoints (`auth:sanctum + staff.password_change_required + active.merchant`)
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -178,11 +199,13 @@ Mirrors how `role:driver` gates driver routes. Registered in `bootstrap/app.php`
 
 ### 6.3 `MerchantOrderCreationService`
 Merchant entry point. Re-asserts active merchant (`MerchantNotActive`), then:
-- **Pickup resolution:** use request pickup if provided; else fall back to the profile's
-  `default_pickup_location` / `default_pickup_address`. If neither → `MissingPickup`.
-  **The resolved pickup (including a stored default) is validated against the active service
-  area at order time** (Critical Rule 16) — a default valid at onboarding can later fall in a
-  deactivated area.
+- **Pickup resolution (all-or-nothing):** a per-order pickup must supply **both** `address`
+  **and** `location` (reject a partial one in the FormRequest); if the request omits pickup
+  entirely, fall back to **both** profile defaults (`default_pickup_address` +
+  `default_pickup_location`) together. If neither a complete per-order pickup nor a complete
+  default is available → `MissingPickup`. **The resolved pickup (including a stored default)
+  is validated against the active service area at order time** (Critical Rule 16) — a default
+  valid at onboarding can later fall in a deactivated area.
 - Build the create input: `order_type = merchant_delivery`, optional `item_price`,
   `delivery_fee_payer = receiver` (fixed), receiver by phone (registered or guest, as P2P).
 - Delegate to `CreationService::create($merchantUser, $input, $idempotencyKey, MerchantRateContext::fromProfile($profile))`.
@@ -210,7 +233,7 @@ Merchant entry point. Re-asserts active merchant (`MerchantNotActive`), then:
 | Case | HTTP | When |
 |---|---|---|
 | `UserNotFound` | 404 | onboarding target user missing |
-| `AlreadyMerchant` | 422 | active/pending profile already exists (post-restore check) |
+| `AlreadyMerchant` | 422 | any **live** profile exists, or a **soft-deleted `banned`** one (non-banned soft-deleted → restored, no error) |
 | `AccountNotEligible` | 422 | onboarding a `banned` account |
 | `InvalidStatusTransition` | 422 | illegal merchant lifecycle move |
 | `MerchantNotActive` | 403 | non-active merchant hits the order flow |
@@ -228,13 +251,16 @@ Localized strings: `lang/en/merchant_messages.php` + `lang/ar/merchant_messages.
 `MerchantOnboardingService` unit tests for the lock+guard paths.
 
 **Slice B** — feature tests:
-- merchant quote+create with `item_price > 0` → settles to merchant (`seller_earnings` row);
-- `item_price = 0` → **no** `seller_earning`;
-- merchant commission override **applied and snapshotted** on the order;
+- merchant quote+create with `item_price > 0`, **then deliver** → `seller_earnings` row
+  spawns at delivery success and settles to the merchant (the row is created in
+  `CodeVerificationService` at delivery, never at create);
+- `item_price = 0`, then deliver → **no** `seller_earning`;
+- merchant commission override **applied and snapshotted** on the order at create;
 - **override changed after quote → merchant quote mismatch (422)**, including the
-  `item_price = 0` case (proves rates-in-token works);
+  `item_price = 0` case (proves rates-in-token + the `assertQuoteMatchesRequest` comparison work);
 - suspended / non-merchant blocked (`MerchantNotActive`);
-- pickup defaulting (uses profile default; missing → `MissingPickup`; deactivated area rejected);
+- pickup all-or-nothing (partial per-order pickup rejected; full default used; neither →
+  `MissingPickup`; deactivated service area rejected);
 - standard `/api/orders` still blocks an active merchant via `assertNotMerchantFlow`;
 - **merchant endpoints exclude non-merchant orders created by the same user.**
 
