@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\Admin\AdminUserLookupController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
+use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as AdminSettlementListSellerPayoutsController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as AdminSettlementListSettlementsController;
@@ -278,6 +279,21 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::post('{user}/ban', [UserModerationController::class, 'ban'])->name('ban');
         Route::post('{user}/reinstate', [UserModerationController::class, 'reinstate'])->name('reinstate');
         Route::get('{user}/moderation-history', [UserModerationController::class, 'history'])->name('moderation-history');
+    });
+
+// /admin/merchants - admin merchant onboarding
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])
+    ->prefix('admin/merchants')
+    ->name('admin.merchants.')
+    ->group(function (): void {
+        Route::get('lookup', [MerchantController::class, 'lookup'])->name('lookup');
+        Route::get('/', [MerchantController::class, 'index'])->name('index');
+        Route::post('/', [MerchantController::class, 'store'])->name('store');
+        Route::get('{merchant:public_id}', [MerchantController::class, 'show'])->name('show');
+        Route::patch('{merchant:public_id}', [MerchantController::class, 'update'])->name('update');
+        Route::post('{merchant:public_id}/suspend', [MerchantController::class, 'suspend'])->name('suspend');
+        Route::post('{merchant:public_id}/reactivate', [MerchantController::class, 'reactivate'])->name('reactivate');
+        Route::post('{merchant:public_id}/ban', [MerchantController::class, 'ban'])->name('ban');
     });
 
 // ─── /me/password/change-from-temp — bypasses the password-change-required middleware ──
