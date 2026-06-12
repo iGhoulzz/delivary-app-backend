@@ -1278,6 +1278,41 @@ Promoted the three Tinker smoke scripts to first-class Pest tests and added CI. 
 
 **Verified:** full Pest suite green incl. the new `tests/Feature/Smoke/` (50 scenario tests), Pint clean.
 
+### 17.17 Merchant Deliveries milestone (sub-project E) (2026-06-12) ✅
+
+Shipped the `merchant_delivery` order type end to end (shop → customer). The `merchant_profiles` table, `MerchantStatus` enum, `OrderType::MerchantDelivery`, `orders.merchant_profile_id`, and the settlement hook already existed from the schema phase; this milestone built the entire HTTP + service surface plus the financial-core wiring. Parallel-worktree build (Claude Slice B order-flow / Codex Slice A onboarding; cross-reviewed; PRs #14/#15). Design `docs/superpowers/specs/2026-06-12-merchant-deliveries-design.md`, plan `docs/superpowers/plans/2026-06-12-merchant-deliveries.md`.
+
+**Slice A — Onboarding (admin):**
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/admin/merchants` | GET | sanctum + role:admin + `MerchantProfilePolicy::viewAny` |
+| `/api/admin/merchants/lookup?phone=` | GET | sanctum + role:admin (anti-enumeration) |
+| `/api/admin/merchants` | POST | sanctum + role:admin + `create` |
+| `/api/admin/merchants/{merchant}` | GET / PATCH | sanctum + role:admin + `view`/`update` |
+| `/api/admin/merchants/{merchant}/{suspend,reactivate,ban}` | POST | sanctum + role:admin |
+
+All groups also carry `staff.password_change_required`; `{merchant}` is `public_id`-bound.
+
+**Slice B — Order flow (merchant):**
+
+| Endpoint | Method | Auth |
+|---|---|---|
+| `/api/merchant/orders/quote` | POST | sanctum + `active.merchant` (throttle:orders_quote) |
+| `/api/merchant/orders` | POST | sanctum + `active.merchant` (throttle:orders_create) |
+| `/api/merchant/orders` | GET | sanctum + `active.merchant` |
+| `/api/merchant/orders/{order}` | GET | sanctum + `active.merchant` (own orders only) |
+
+**Locked decisions:** admin **invite-only, create-directly-active** onboarding (no self-application); `MerchantStatus` is an **independent lever** (separate from `AccountStatus` moderation, mirroring `DriverStatus`); **ban is terminal** on the merchant axis (distinct from account-moderation `banned`, which stays reversible); merchant orders carry an **optional `item_price`** (sale vs. pure fulfillment); **receiver always pays** the delivery fee (spec §4.4 — no `delivery_fee_payer` input); **minimal lifecycle audit** (status + `approved_*` + `notes`, no new table). Rate hierarchy (§4.3) realised: merchant `commission_rate_override` / `driver_fee_cut_override` layer over platform defaults, validated `0 ≤ r ≤ 1`, snapshotted on the order.
+
+**Architecture:** dedicated endpoints + services reusing the order pipeline via a threaded `App\ValueObjects\MerchantOrderContext` (merchant id + override rates + business identity). `PricingService` commission predicate widened from `P2pSale` to **sale orders** (`P2pSale || MerchantDelivery`) and accepts the override context; `QuoteService` embeds `commission_rate`/`driver_fee_cut_rate`/`merchant_profile_id` in the signed token; `CreationService` accepts an optional `MerchantOrderContext` (skips `assertNotMerchantFlow`, allows `item_price`, snapshots **business identity** as `sender_name`/`sender_phone`, sets `merchant_profile_id`). Token integrity: `merchant_profile_id` mismatch → `InvalidQuoteToken` (400) in `assertQuoteMatchesRequest`; an override changed mid-quote → `QuotePriceChanged` (409) in `assertQuotePriceStillCurrent` (rates compared, so it's caught even when `item_price = 0`). `MerchantOnboardingService` is the sole writer of `merchant_profiles` (lock+reload+guard in a txn; banned-account check **before** the `withTrashed` inspect/restore; restores only soft-deleted non-banned profiles; assigns the Spatie `merchant` role on activation, removes it on ban). `MerchantOrderCreationService` resolves pickup all-or-nothing (per-order or profile default, rejecting partials) then delegates.
+
+**Settlement is free:** `seller_earnings.seller_user_id = order.sender_user_id`, and a merchant order's sender **is** the merchant's user — so the existing settlement → 48h clearance → seller-payout pipeline pays merchants with zero changes; `merchant_profile_id` is an added dimension, never a replacement for `sender_user_id`.
+
+**Housekeeping:** `composer.json` floor aligned to PHP `^8.4` (+ lock refresh) — locked Symfony 8 / collision 8.9 require ≥8.4.
+
+**Verified on merged `main`:** full Pest suite **261/261** green (incl. `tests/Feature/Smoke/MerchantDeliveryTest` full lifecycle: onboard → order → deliver → seller-earning → settle → payout), Pint clean, security review (no HIGH/MEDIUM — authz scoping, public_id discipline, financial-snapshot immutability, mass-assignment whitelisting all sound).
+
 **End of Specification Document**
 
 *This document represents all locked architectural decisions. Future questions and decisions should be appended to this document with date stamps.*

@@ -299,8 +299,8 @@ Driver::join('driver_profiles', ...)
 
 ## Current Project State
 
-**Last updated:** 2026-06-02
-**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10). Test infrastructure ✅ (milestone 2026-06-04).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons; all e2e smokes run as Pest tests in CI. Merchant deliveries (sub-project E) is next.
+**Last updated:** 2026-06-12
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10). Test infrastructure ✅ (milestone 2026-06-04). Merchant deliveries ✅ (sub-project E, milestone 2026-06-12, PRs #14/#15).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons; all e2e smokes run as Pest tests in CI; merchants onboarded by admins create shop→customer orders that settle through the existing payout pipeline. Settlement v2 (cash-to-seller's-address) is next.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -532,10 +532,19 @@ Tinker smoke scripts promoted to Pest + CI. Full detail in SYSTEM_SPECIFICATION 
 - **CI:** `.github/workflows/ci.yml` runs migrate + Pint + Pest on a `postgis/postgis` service.
 - **Tinker scripts kept** for manual debugging; `realtime-smoke.php` conversion deferred.
 
+### Merchant Deliveries milestone (sub-project E) (2026-06-12) ✅
+
+Shipped the `merchant_delivery` order type end to end (shop → customer). Full detail in SYSTEM_SPECIFICATION §17.17. Parallel-worktree build (Claude Slice B order-flow / Codex Slice A onboarding; cross-reviewed; PRs #14/#15).
+
+- **Onboarding (admin):** `admin/merchants` CRUD + `suspend`/`reactivate`/`ban` (admin-only `MerchantProfilePolicy`, `public_id`-bound). `MerchantOnboardingService` = sole writer of `merchant_profiles` (lock+reload+guard in txn; banned-account check **before** `withTrashed` inspect/restore; ban removes the Spatie `merchant` role). Invite-only, **create-directly-active**; **ban is terminal** on the merchant axis (independent of `AccountStatus` moderation).
+- **Order flow (merchant):** `merchant/orders` quote/create/index/show behind a new `active.merchant` middleware (role `merchant` + active profile). `MerchantOrderCreationService` resolves pickup all-or-nothing (per-order or profile default) then delegates to the shared `CreationService` via `App\ValueObjects\MerchantOrderContext`. `item_price` optional (sale vs. pure fulfillment); **receiver always pays** the delivery fee (spec §4.4).
+- **Financial core:** rate hierarchy (§4.3) — merchant `commission_rate_override`/`driver_fee_cut_override` layer over platform defaults (`0 ≤ r ≤ 1`), snapshotted on the order. `PricingService` commission now covers **sale orders** (`P2pSale || MerchantDelivery`); `QuoteService` signs the rates + `merchant_profile_id`; token integrity → `InvalidQuoteToken` (400) on wrong-merchant token, `QuotePriceChanged` (409) on a mid-quote override change.
+- **Settlement is free:** merchant order sender = merchant's user, and `seller_earnings.seller_user_id = order.sender_user_id`, so the existing settlement → clearance → payout pipeline pays merchants unchanged.
+- **Verified merged main:** Pest **261/261**, Pint clean, new `MerchantDeliveryTest` full-lifecycle smoke green, security review no HIGH/MEDIUM. Housekeeping: `composer.json` PHP floor → `^8.4`.
+
 ### Next Steps (in order)
-1. **Merchant deliveries (sub-project E)** — blocked on merchant onboarding flow.
-2. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
-3. **Convert `realtime-smoke.php` to Pest** (`RealtimeSmokeTest`) — deferred from the test-infrastructure milestone.
+1. **Cash delivery to seller's address (settlement v2)** — currently office-pickup only per spec §4.10; v2 milestone would build an outbound payout-delivery flow on top of the existing order pipeline.
+2. **Convert `realtime-smoke.php` to Pest** (`RealtimeSmokeTest`) — deferred from the test-infrastructure milestone.
 
 ### Open Questions
 - Storage fee policy specifics (flat daily after grace period? Tiered?)
