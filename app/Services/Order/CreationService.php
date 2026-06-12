@@ -19,6 +19,7 @@ use App\Models\GuestRecipient;
 use App\Models\Order;
 use App\Models\User;
 use App\Support\QuoteToken;
+use App\ValueObjects\MerchantOrderContext;
 use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -36,8 +37,12 @@ final class CreationService
     /**
      * @param  array<string, mixed>  $input
      */
-    public function create(User $sender, array $input, ?string $idempotencyKey = null): Order
-    {
+    public function create(
+        User $sender,
+        array $input,
+        ?string $idempotencyKey = null,
+        ?MerchantOrderContext $merchant = null,
+    ): Order {
         $bodyHash = $this->bodyHash($input);
 
         if ($idempotencyKey !== null) {
@@ -59,14 +64,20 @@ final class CreationService
 
         $orderType = OrderType::from((string) $input['order_type']);
         $itemSize = ItemSize::from((string) $input['item_size']);
-        $itemPrice = $orderType === OrderType::P2pSale
-            ? bcadd((string) $input['item_price'], '0', 2)
-            : '0.00';
-        $payer = $orderType === OrderType::P2pSale
-            ? 'receiver'
-            : (string) ($input['delivery_fee_payer'] ?? 'sender');
 
-        $this->assertQuoteMatchesRequest($tokenPayload, $input, $orderType, $itemSize, $itemPrice, $payer);
+        // Item price applies to SALE orders (p2p_sale OR merchant_delivery).
+        $isSale = $orderType === OrderType::P2pSale || $orderType === OrderType::MerchantDelivery;
+        $itemPrice = $isSale
+            ? bcadd((string) ($input['item_price'] ?? '0'), '0', 2)
+            : '0.00';
+        // P2P and merchant orders are always receiver-paid (spec §4.4); standard
+        // delivery lets the caller choose.
+        $payer = match (true) {
+            $orderType === OrderType::P2pSale, $merchant !== null => 'receiver',
+            default => (string) ($input['delivery_fee_payer'] ?? 'sender'),
+        };
+
+        $this->assertQuoteMatchesRequest($tokenPayload, $input, $orderType, $itemSize, $itemPrice, $payer, $merchant);
 
         $fresh = $this->pricing->compute(
             $orderType,
@@ -78,11 +89,15 @@ final class CreationService
             $itemPrice,
             $payer,
             DeliveryFeePaymentMethod::Cash->value,
+            $merchant,
         );
 
-        $this->assertQuotePriceStillCurrent($tokenPayload, $fresh, $orderType, $input, $itemSize, $itemPrice, $payer);
+        $this->assertQuotePriceStillCurrent($tokenPayload, $fresh, $orderType, $input, $itemSize, $itemPrice, $payer, $merchant);
         $this->assertSenderCanCreateForReceiver($sender, (string) $input['receiver_phone']);
-        $this->assertNotMerchantFlow($sender);
+
+        if ($merchant === null) {
+            $this->assertNotMerchantFlow($sender);
+        }
 
         $receiverUser = User::query()
             ->where('phone_number', (string) $input['receiver_phone'])
@@ -103,6 +118,7 @@ final class CreationService
             $receiverUser,
             $receiverType,
             $codePair,
+            $merchant,
         ): Order {
             $guest = $receiverType === ReceiverType::Guest
                 ? $this->touchGuestRecipient((string) $input['receiver_phone'], (string) $input['receiver_name'])
@@ -113,9 +129,15 @@ final class CreationService
                 'status' => OrderStatus::Created->value,
                 'status_changed_at' => now(),
 
+                'merchant_profile_id' => $merchant?->merchantProfileId,
                 'sender_user_id' => $sender->id,
-                'sender_phone' => (string) $sender->phone_number,
-                'sender_name' => $sender->fullName(),
+                // Merchant orders snapshot the business identity, not the owner's personal details.
+                'sender_phone' => $merchant !== null
+                    ? (string) $merchant->contactPhone
+                    : (string) $sender->phone_number,
+                'sender_name' => $merchant !== null
+                    ? $merchant->businessName
+                    : $sender->fullName(),
 
                 'pickup_address' => (string) $input['pickup_address'],
                 'pickup_location' => Point::makeGeodetic(
@@ -220,11 +242,15 @@ final class CreationService
         ItemSize $itemSize,
         string $itemPrice,
         string $payer,
+        ?MerchantOrderContext $merchant = null,
     ): void {
         $matches = (string) ($payload['order_type'] ?? '') === $orderType->value
             && (string) ($payload['item_size'] ?? '') === $itemSize->value
             && bccomp((string) ($payload['item_price'] ?? ''), $itemPrice, 2) === 0
             && (string) ($payload['delivery_fee_payer'] ?? '') === $payer
+            // Token identity: the quote must have been issued for this merchant
+            // (null for the customer path). Mismatch = wrong/tampered token (400).
+            && (int) ($payload['merchant_profile_id'] ?? 0) === (int) ($merchant?->merchantProfileId ?? 0)
             && $this->sameCoordinate($payload['pickup_lat'] ?? null, $input['pickup_location']['lat'])
             && $this->sameCoordinate($payload['pickup_lng'] ?? null, $input['pickup_location']['lng'])
             && $this->sameCoordinate($payload['receiver_lat'] ?? null, $input['receiver_location']['lat'])
@@ -251,11 +277,16 @@ final class CreationService
         ItemSize $itemSize,
         string $itemPrice,
         string $payer,
+        ?MerchantOrderContext $merchant = null,
     ): void {
         $changed = (int) $fresh['region_id'] !== (int) ($payload['region_id'] ?? 0)
             || bccomp((string) $fresh['delivery_fee_base'], (string) ($payload['delivery_fee_base'] ?? ''), 2) !== 0
             || bccomp((string) $fresh['commission_amount'], (string) ($payload['commission_amount'] ?? ''), 2) !== 0
-            || bccomp((string) $fresh['driver_fee_cut_amount'], (string) ($payload['driver_fee_cut_amount'] ?? ''), 2) !== 0;
+            || bccomp((string) $fresh['driver_fee_cut_amount'], (string) ($payload['driver_fee_cut_amount'] ?? ''), 2) !== 0
+            // Compare RATES too (4dp) so a merchant override edit mid-quote is a
+            // price-change (409) even when item_price = 0 keeps the amount at 0.
+            || bccomp((string) $fresh['commission_rate'], (string) ($payload['commission_rate'] ?? ''), 4) !== 0
+            || bccomp((string) $fresh['driver_fee_cut_rate'], (string) ($payload['driver_fee_cut_rate'] ?? ''), 4) !== 0;
 
         if (! $changed) {
             return;
@@ -270,6 +301,7 @@ final class CreationService
             $itemSize,
             $itemPrice,
             $payer,
+            $merchant,
         ));
     }
 
