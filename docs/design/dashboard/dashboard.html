@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tawseel — Ops Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Baloo+Bhaijaan+2:wght@400;500;600;700;800&family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['IBM Plex Sans', 'IBM Plex Sans Arabic', 'system-ui', 'sans-serif'],
+          mono: ['IBM Plex Mono', 'ui-monospace', 'monospace'],
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root {
+    --accent: #2563eb;
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, white);
+    --font-sans: 'IBM Plex Sans', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  }
+  [dir="rtl"] {
+    --font-sans: 'IBM Plex Sans Arabic', 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  /* ---- Playful (cartoony) skin: rounded display font everywhere, data stays mono ---- */
+  [data-skin="playful"] {
+    --font-sans: 'Baloo Bhaijaan 2', 'Fredoka', system-ui, sans-serif;
+  }
+
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background: #f8fafc;
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .font-mono, [class*="font-mono"] { font-family: 'IBM Plex Mono', ui-monospace, monospace !important; }
+  .font-mono, .tabular-nums { font-variant-numeric: tabular-nums; }
+  [data-skin="playful"] body { letter-spacing: .005em; }
+
+  /* density */
+  body[data-density="dense"] table td { padding-top: 7px; padding-bottom: 7px; }
+  body[data-density="dense"] table th { padding-top: 8px; padding-bottom: 8px; }
+
+  /* scrollbars */
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-thumb { background: #d8dee6; border: 3px solid transparent; background-clip: padding-box; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #c2cad4; background-clip: padding-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb { background: #2c3850; border: 3px solid transparent; background-clip: padding-box; }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #3a496a; background-clip: padding-box; }
+
+  [dir="rtl"] .truncate { text-align: right; }
+
+  /* accent reaches inputs + nav hover */
+  input { caret-color: var(--accent); }
+  input:focus, textarea:focus { border-color: var(--accent) !important; }
+  .nav-link:hover { background: color-mix(in srgb, var(--accent) 11%, transparent) !important; }
+  [data-theme="dark"] .nav-link:hover { background: color-mix(in srgb, var(--accent) 24%, transparent) !important; }
+
+  /* bespoke status chips */
+  .status-pill { box-shadow: 0 1px 1.5px rgba(15,23,42,.16); }
+  [data-skin="playful"] .status-pill { box-shadow: 0 2px 0 rgba(15,23,42,.13); border-radius: 999px; }
+
+  @keyframes drawerInLtr { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  @keyframes drawerInRtl { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+  @keyframes drawerFade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes pinBob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(.975); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+  /* =================== PLAYFUL SKIN =================== */
+  [data-skin="playful"] .app-card {
+    border-radius: 22px !important;
+    border-width: 2px !important;
+    box-shadow: 4px 5px 0 rgba(15,23,42,.05), 0 14px 30px -20px rgba(15,23,42,.30) !important;
+  }
+  [data-skin="playful"][data-theme="dark"] .app-card {
+    box-shadow: 4px 5px 0 rgba(0,0,0,.32), 0 14px 30px -18px rgba(0,0,0,.5) !important;
+  }
+  [data-skin="playful"] .rounded-lg { border-radius: 13px !important; }
+  [data-skin="playful"] .rounded-md { border-radius: 10px !important; }
+  [data-skin="playful"] .rounded-xl { border-radius: 18px !important; }
+  [data-skin="playful"] .map-pin { animation: pinBob 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  /* dotted paper texture on the page */
+  [data-skin="playful"] .app-bg { background-image: radial-gradient(rgba(15,23,42,.055) 1.3px, transparent 1.3px); background-size: 22px 22px; }
+  [data-skin="playful"][data-theme="dark"] .app-bg { background-image: radial-gradient(rgba(255,255,255,.05) 1.3px, transparent 1.3px); }
+
+  /* =================== DARK THEME (token retint) =================== */
+  [data-theme="dark"] {
+    --card: #1a2336;
+    --page: #0b1120;
+    --page2: #0d1424;
+    --inset: #141d2f;
+    --inset2: #212c44;
+    --bd: rgba(148,163,184,.16);
+    --bd2: rgba(148,163,184,.28);
+    --t900: #f1f5f9; --t800: #e4e9f2; --t700: #cdd6e4;
+    --t600: #bac6da; --t500: #94a2ba; --t400: #7c8aa4; --t300: #5d6b86;
+    --accent-soft: color-mix(in srgb, var(--accent) 28%, #0b1120);
+  }
+  [data-theme="dark"] body { background: var(--page); color: var(--t800); }
+  /* surfaces */
+  [data-theme="dark"] .bg-white { background-color: var(--card) !important; }
+  [data-theme="dark"] .bg-white\/85 { background-color: color-mix(in srgb, var(--card) 85%, transparent) !important; }
+  [data-theme="dark"] .bg-white\/80 { background-color: color-mix(in srgb, var(--card) 80%, transparent) !important; }
+  [data-theme="dark"] .bg-white\/95 { background-color: color-mix(in srgb, var(--card) 95%, transparent) !important; }
+  [data-theme="dark"] .bg-white\/70 { background-color: color-mix(in srgb, var(--card) 78%, transparent) !important; }
+  [data-theme="dark"] .bg-white\/60 { background-color: color-mix(in srgb, var(--inset2) 80%, transparent) !important; }
+  [data-theme="dark"] .bg-white\/50 { background-color: color-mix(in srgb, var(--inset2) 62%, transparent) !important; }
+  [data-theme="dark"] .bg-white\/40 { background-color: color-mix(in srgb, var(--inset) 60%, transparent) !important; }
+  [data-theme="dark"] .bg-slate-50 { background-color: var(--page) !important; }
+  [data-theme="dark"] .bg-slate-50\/60 { background-color: var(--inset) !important; }
+  [data-theme="dark"] .bg-slate-50\/70 { background-color: var(--inset) !important; }
+  [data-theme="dark"] .bg-slate-100 { background-color: var(--inset2) !important; }
+  [data-theme="dark"] .bg-slate-200 { background-color: var(--bd2) !important; }
+  /* text ramp */
+  [data-theme="dark"] .text-slate-900 { color: var(--t900) !important; }
+  [data-theme="dark"] .text-slate-800 { color: var(--t800) !important; }
+  [data-theme="dark"] .text-slate-700 { color: var(--t700) !important; }
+  [data-theme="dark"] .text-slate-600 { color: var(--t600) !important; }
+  [data-theme="dark"] .text-slate-500 { color: var(--t500) !important; }
+  [data-theme="dark"] .text-slate-400 { color: var(--t400) !important; }
+  [data-theme="dark"] .text-slate-300 { color: var(--t300) !important; }
+  /* borders */
+  [data-theme="dark"] .border-slate-200, [data-theme="dark"] .border-slate-200\/80, [data-theme="dark"] .border-slate-100 { border-color: var(--bd) !important; }
+  [data-theme="dark"] .border-slate-300 { border-color: var(--bd2) !important; }
+  [data-theme="dark"] .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+  [data-theme="dark"] .divide-slate-200\/80 > :not([hidden]) ~ :not([hidden]) { border-color: var(--bd) !important; }
+  /* rings */
+  [data-theme="dark"] .ring-slate-200 { --tw-ring-color: var(--bd) !important; }
+  [data-theme="dark"] .ring-white { --tw-ring-color: var(--card) !important; }
+  /* interactive states */
+  [data-theme="dark"] .hover\:bg-slate-100:hover { background-color: var(--inset2) !important; }
+  [data-theme="dark"] .hover\:bg-slate-50:hover { background-color: var(--inset) !important; }
+  [data-theme="dark"] .hover\:bg-slate-50\/70:hover { background-color: var(--inset) !important; }
+  [data-theme="dark"] .hover\:bg-white:hover { background-color: var(--inset2) !important; }
+  [data-theme="dark"] .focus\:bg-white:focus { background-color: var(--card) !important; }
+</style>
+</head>
+<body style="background-color: rgb(255, 255, 255)">
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="app/data.jsx"></script>
+  <script type="text/babel" src="app/icons.jsx"></script>
+  <script type="text/babel" src="app/ui.jsx"></script>
+  <script type="text/babel" src="app/driverUI.jsx"></script>
+  <script type="text/babel" src="app/settlementsUI.jsx"></script>
+  <script type="text/babel" src="app/map.jsx"></script>
+  <script type="text/babel" src="app/shell.jsx"></script>
+  <script type="text/babel" src="app/overview.jsx"></script>
+  <script type="text/babel" src="app/orders.jsx"></script>
+  <script type="text/babel" src="app/orderDetail.jsx"></script>
+  <script type="text/babel" src="app/drivers.jsx"></script>
+  <script type="text/babel" src="app/driverDetail.jsx"></script>
+  <script type="text/babel" src="app/driverForm.jsx"></script>
+  <script type="text/babel" src="app/users.jsx"></script>
+  <script type="text/babel" src="app/userDetail.jsx"></script>
+  <script type="text/babel" src="app/merchants.jsx"></script>
+  <script type="text/babel" src="app/merchantDetail.jsx"></script>
+  <script type="text/babel" src="app/merchantForm.jsx"></script>
+  <script type="text/babel" src="app/settlements.jsx"></script>
+  <script type="text/babel" src="app/settlementDriver.jsx"></script>
+  <script type="text/babel" src="app/settlementSeller.jsx"></script>
+  <script type="text/babel" src="app/settlementHistory.jsx"></script>
+  <script type="text/babel" src="app/finance.jsx"></script>
+  <script type="text/babel" src="app/settings.jsx"></script>
+  <script type="text/babel" src="app/staff.jsx"></script>
+  <script type="text/babel" src="app/staffDetail.jsx"></script>
+  <script type="text/babel" src="app/staffForm.jsx"></script>
+  <script type="text/babel" src="app/pages.jsx"></script>
+  <script type="text/babel" src="app/app.jsx"></script>
+</body>
+</html>

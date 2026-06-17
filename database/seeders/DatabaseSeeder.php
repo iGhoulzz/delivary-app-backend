@@ -22,6 +22,12 @@ class DatabaseSeeder extends Seeder
             $seeders[] = TestStaffSeeder::class;
         }
 
+        // Full demo world (geography + accounts + sample orders) for manual API /
+        // dashboard testing — never in testing (tests build their own world) or prod.
+        if (app()->environment(['local', 'development'])) {
+            $seeders[] = DemoSeeder::class;
+        }
+
         $this->call($seeders);
     }
 }
