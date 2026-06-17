@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Services\Order\AdminAssignmentService;
 use App\Services\Order\CancellationService;
 use App\Services\Order\FailedDeliveryService;
+use App\Support\Resolvers\PublicIdResolver;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 final class OrderController extends Controller
@@ -41,6 +42,25 @@ final class OrderController extends Controller
 
         if (isset($validated['type'])) {
             $query->where('order_type', $validated['type']);
+        }
+
+        if (isset($validated['driver_public_id'])) {
+            $query->where('driver_id', PublicIdResolver::userId($validated['driver_public_id']));
+        }
+
+        if (isset($validated['merchant_public_id'])) {
+            $query->where('merchant_profile_id', PublicIdResolver::merchantProfileId($validated['merchant_public_id']));
+        }
+
+        if (isset($validated['search'])) {
+            $search = trim((string) $validated['search']);
+            $query->where(static fn ($q) => $q
+                ->where('public_id', 'ilike', '%'.$search.'%')
+                ->orWhere('tracking_token', 'ilike', '%'.$search.'%')
+                ->orWhere('sender_name', 'ilike', '%'.$search.'%')
+                ->orWhere('sender_phone', 'like', '%'.$search.'%')
+                ->orWhere('receiver_name', 'ilike', '%'.$search.'%')
+                ->orWhere('receiver_phone', 'like', '%'.$search.'%'));
         }
 
         return AdminOrderResource::collection(

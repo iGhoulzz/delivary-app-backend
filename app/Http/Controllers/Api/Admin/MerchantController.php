@@ -29,7 +29,7 @@ final class MerchantController extends Controller
     {
         $this->authorize('viewAny', MerchantProfile::class);
 
-        $query = MerchantProfile::query()->with('user');
+        $query = MerchantProfile::query()->with('user.roles');
 
         $status = $request->query('status');
         if (is_string($status) && MerchantStatus::tryFrom($status) !== null) {
@@ -63,7 +63,7 @@ final class MerchantController extends Controller
 
         $merchant = $this->merchants->create($request->user(), $request->validated());
 
-        return (new MerchantResource($merchant->load('user')))
+        return (new MerchantResource($merchant->load('user.roles')))
             ->response()
             ->setStatusCode(201);
     }
@@ -72,7 +72,7 @@ final class MerchantController extends Controller
     {
         $this->authorize('view', $merchant);
 
-        return new MerchantResource($merchant->load('user'));
+        return new MerchantResource($merchant->load('user.roles'));
     }
 
     public function update(UpdateMerchantRequest $request, MerchantProfile $merchant): MerchantResource
@@ -80,7 +80,7 @@ final class MerchantController extends Controller
         $this->authorize('update', $merchant);
 
         return new MerchantResource(
-            $this->merchants->update($request->user(), $merchant, $request->validated())->load('user'),
+            $this->merchants->update($request->user(), $merchant, $request->validated())->load('user.roles'),
         );
     }
 
@@ -89,7 +89,7 @@ final class MerchantController extends Controller
         $this->authorize('suspend', $merchant);
 
         return new MerchantResource(
-            $this->merchants->suspend($request->user(), $merchant)->load('user'),
+            $this->merchants->suspend($request->user(), $merchant)->load('user.roles'),
         );
     }
 
@@ -98,7 +98,7 @@ final class MerchantController extends Controller
         $this->authorize('reactivate', $merchant);
 
         return new MerchantResource(
-            $this->merchants->reactivate($request->user(), $merchant)->load('user'),
+            $this->merchants->reactivate($request->user(), $merchant)->load('user.roles'),
         );
     }
 
@@ -107,7 +107,7 @@ final class MerchantController extends Controller
         $this->authorize('ban', $merchant);
 
         return new MerchantResource(
-            $this->merchants->ban($request->user(), $merchant)->load('user'),
+            $this->merchants->ban($request->user(), $merchant)->load('user.roles'),
         );
     }
 }

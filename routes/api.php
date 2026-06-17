@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\Admin\AdminUserLookupController;
+use App\Http\Controllers\Api\Admin\Driver\OnboardingController as AdminDriverOnboardingController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as Adm
 use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
 use App\Http\Controllers\Api\Admin\Staff\OfficeAssignmentController;
 use App\Http\Controllers\Api\Admin\Staff\StaffController;
+use App\Http\Controllers\Api\Admin\UserDirectoryController;
 use App\Http\Controllers\Api\Admin\UserModerationController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
@@ -199,7 +201,13 @@ Route::middleware(['auth:sanctum', 'role:office_staff', 'staff.password_change_r
 // ─── /admin/drivers — admin driver lifecycle management ─────────────────
 Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])->prefix('admin/drivers')->group(function (): void {
     Route::get('/', [AdminDriverController::class, 'index']);
+    Route::post('lookup', [AdminDriverOnboardingController::class, 'lookup']);
+    Route::post('/', [AdminDriverOnboardingController::class, 'onboard']);
     Route::get('{driverUser:public_id}', [AdminDriverController::class, 'show']);
+    Route::post('{driverUser:public_id}/verify-phone', [AdminDriverOnboardingController::class, 'verifyPhone']);
+    Route::post('{driverUser:public_id}/documents', [AdminDriverOnboardingController::class, 'storeDocument']);
+    Route::delete('{driverUser:public_id}/documents/{documentType}', [AdminDriverOnboardingController::class, 'destroyDocument']);
+    Route::post('{driverUser:public_id}/submit', [AdminDriverOnboardingController::class, 'submit']);
     Route::post('{driverUser:public_id}/approve', [AdminDriverController::class, 'approve']);
     Route::post('{driverUser:public_id}/reject', [AdminDriverController::class, 'reject']);
     Route::post('{driverUser:public_id}/suspend', [AdminDriverController::class, 'suspend']);
@@ -289,6 +297,22 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     ->name('admin.users.')
     ->group(function (): void {
         Route::get('lookup', AdminUserLookupController::class)->name('lookup');
+    });
+
+// /admin/users - dashboard user directory
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])
+    ->prefix('admin/users')
+    ->name('admin.users.')
+    ->group(function (): void {
+        Route::get('/', [UserDirectoryController::class, 'index'])->name('index');
+        Route::get('{user}', [UserDirectoryController::class, 'show'])->name('show');
+    });
+
+// /admin/users - admin account moderation
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required', 'throttle:moderation'])
+    ->prefix('admin/users')
+    ->name('admin.users.')
+    ->group(function (): void {
         Route::post('{user}/suspend', [UserModerationController::class, 'suspend'])->name('suspend');
         Route::post('{user}/ban', [UserModerationController::class, 'ban'])->name('ban');
         Route::post('{user}/reinstate', [UserModerationController::class, 'reinstate'])->name('reinstate');
