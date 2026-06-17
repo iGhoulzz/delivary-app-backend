@@ -8,6 +8,8 @@
 
 **Tech Stack:** Laravel 11 (PHP 8.4), Sanctum, Spatie Permission, PostGIS (clickbar/magellan), Pest. All endpoints `auth:sanctum` + `role:admin` + `staff.password_change_required`.
 
+**Testing conventions:** the test snippets below are **illustrative pseudocode**. Real tests use the repo's actual helpers — `Laravel\Sanctum\Sanctum::actingAs($user)`, `Spatie\Permission\Models\Role::findOrCreate('admin')`, `User::factory()`, and `Tests\Support\TestWorld::create()` for the geographic/platform world. There are no global `makeAdmin()` / `sanctumActingAs()` helpers; either add them to `tests/Pest.php` first or inline the real calls.
+
 ---
 
 ## Slice ownership & merge order
@@ -19,7 +21,7 @@
 | **B** | Codex | Users directory/detail, Orders additive filters, Merchants verify | — |
 | **D** | Codex | Admin driver onboarding (reuse office services) | — |
 
-**Merge order:** Claude merges **A → C** first; Codex rebases onto `origin/main` and merges **B → D**. `routes/api.php` + `app/Providers/AppServiceProvider.php` are shared-touch files — each slice appends its own block; Codex rebases to absorb Claude's additions. Per `docs/WORKFLOW.md §5`.
+**Merge order:** Claude merges **A → C** first; Codex rebases onto `origin/main` and merges **B → D**. `routes/api.php` is the only shared-touch file — each slice appends its own route block; Codex rebases to absorb Claude's additions. **No new rate limiters are needed, so `AppServiceProvider` is not touched.** Per `docs/WORKFLOW.md §5`.
 
 ## File-structure map
 
@@ -32,12 +34,13 @@
 - `app/Http/Resources/Driver/DriverStrikeResource.php` (C)
 - `app/Services/Driver/DriverStrikeService.php` (C)
 - `app/Http/Requests/Driver/AddStrikeRequest.php` · `VoidStrikeRequest.php` · `AdjustAccountRequest.php` (C)
+- `app/Exceptions/Driver/NegativeBucketException.php` (C — rendered 422)
 - `database/migrations/2026_06_17_000100_add_public_id_to_driver_strikes_table.php` (C)
 - `app/Http/Controllers/Api/Admin/UserDirectoryController.php` (B)
 - `app/Http/Resources/Admin/UserDirectoryResource.php` · `UserDetailResource.php` (B)
 - `app/Http/Requests/Admin/IndexUsersRequest.php` (B)
 - `app/Http/Controllers/Api/Admin/Driver/OnboardingController.php` (D)
-- `app/Http/Requests/Driver/AdminOnboardDriverRequest.php` (D)
+- `app/Http/Requests/Driver/AdminOnboardDriverRequest.php` · `AdminDriverLookupRequest.php` (D)
 
 **Additive touches (new field / optional param / nullable column only)**
 - `app/Http/Controllers/Api/Auth/MeController.php` (A) — enrich response
@@ -46,8 +49,10 @@
 - `app/Http/Requests/Driver/IndexDriverRequest.php` (C) — `+activity_status` optional filter; controller applies it
 - `app/Http/Requests/Order/AdminListOrdersRequest.php` + `Api/Admin/OrderController.php` (B) — `+search,driver_public_id,merchant_public_id`
 - `app/Services/Driver/DriverAccountLedgerService.php` (C) — `+applyManualAdjustment()`; widen private `mutateBucket($reference)` to nullable (backward-compatible)
-- `app/Http/Resources/MerchantResource.php` (B) — verify/add override + pickup + owner fields
-- `routes/api.php`, `app/Providers/AppServiceProvider.php` (all) — append routes + limiters
+- `app/Models/PlatformSetting.php` (A) — widen `set()` with optional `?string $type = null` (backward-compatible)
+- `app/Support/Resolvers/PublicIdResolver.php` (B) — `+merchantProfileId()`
+- `app/Http/Resources/MerchantResource.php` (B) — enrich owner embed (phone/account_status/roles)
+- `routes/api.php` (all) — append route groups only. *(No new throttles → do **not** touch `AppServiceProvider`.)*
 
 ---
 
@@ -134,7 +139,7 @@ it('forbids non-admins', function () {
 
 - [ ] **Step 1 — failing test**: seed `TestWorld`, an active driver with `current_location` + `activity_status=online`; assert `offices[]` (id,name,location) and `drivers[]` (id,name,activity_status,location:{lat,lng},active_load).
 - [ ] **Step 2 — run, expect FAIL.**
-- [ ] **Step 3 — implement**: offices = active `OfficeLocation`s with location; drivers = `DriverProfile::where('status',DriverStatus::Active)->whereIn('activity_status',[Online,OnOrder])->whereNotNull('current_location')->with('user')->get()`, each mapped with `current_location` → `{lat,lng}` (mirror `AdminOrderResource::pt()`), `active_load` = `Order::where('driver_id',$u->id)->whereIn('status',[Assigned,...InFlight])->count()`. Reads existing columns only.
+- [ ] **Step 3 — implement**: offices = active `OfficeLocation`s with location; drivers = `DriverProfile::where('status',DriverStatus::Active)->whereIn('activity_status',[Online,OnOrder])->whereNotNull('current_location')->with('user')->get()`, each mapped with `current_location` → `{lat,lng}` (mirror `AdminOrderResource::pt()`), `active_load` = `Order::query()->forDriver($u->id)->activeForDriver()->count()` (use the **existing** scopes — do not hand-roll a status list; note `activeForDriver()` includes return-flow statuses by design). Reads existing columns only.
 - [ ] **Step 4 — run, expect PASS.**
 - [ ] **Step 5 — commit** `feat(admin): map overview endpoint`.
 
@@ -144,14 +149,14 @@ it('forbids non-admins', function () {
 - Create: `app/Support/SettingsCatalog.php`
 - Test: `tests/Unit/Support/SettingsCatalogTest.php`
 
-- [ ] **Step 1 — failing test**: `SettingsCatalog::keys()` contains exactly the confirmed keys; each entry has `type` in {decimal,integer,boolean,json} and an optional `max`/`min`.
+- [ ] **Step 1 — failing test**: `SettingsCatalog::keys()` contains exactly the **editable** keys (the read-only `pricing.item_size_modifiers` is **excluded**); each entry has `type` in {decimal,integer,boolean} and an optional `max`/`min`.
 - [ ] **Step 2 — run, expect FAIL.**
 - [ ] **Step 3 — implement** — a `final class` returning a map (no `pricing.delivery_fee_base` — base fee is per-region `regions.base_fee`, out of scope here):
 ```php
 public const KEYS = [
     'pricing.item_commission_rate' => ['type' => 'decimal', 'min' => 0, 'max' => 1],
     'pricing.driver_fee_cut_rate'  => ['type' => 'decimal', 'min' => 0, 'max' => 1],
-    'pricing.free_km'              => ['type' => 'integer', 'min' => 0],
+    'pricing.free_km'              => ['type' => 'decimal', 'min' => 0],  // seeded decimal, not integer
     'pricing.per_km_rate'          => ['type' => 'decimal', 'min' => 0],
     'payouts.clearance_hours'      => ['type' => 'integer', 'min' => 0],
     'payouts.min_amount'           => ['type' => 'decimal', 'min' => 0],
@@ -167,8 +172,8 @@ public const KEYS = [
 
 **Files:** Create `SettingsController@index`, `app/Http/Resources/Admin/SettingResource.php`; modify `routes/api.php`. Test `tests/Feature/Admin/SettingsReadTest.php`.
 
-- [ ] **Step 1 — failing test**: admin GET returns each catalog key with its current `PlatformSetting::get` value grouped by namespace; non-admin forbidden.
-- [ ] **Step 2 — FAIL. Step 3 — implement**: iterate `SettingsCatalog::KEYS`, `PlatformSetting::get($key, default)`, group by the prefix before the first `.` (or `risk` for `new_driver_max_liability`). **Step 4 — PASS. Step 5 — commit** `feat(admin): read platform settings`.
+- [ ] **Step 1 — failing test**: admin GET returns each catalog key with its current `PlatformSetting::get` value grouped by namespace, **plus a read-only `pricing.item_size_modifiers`** entry; non-admin forbidden.
+- [ ] **Step 2 — FAIL. Step 3 — implement**: iterate `SettingsCatalog::KEYS`, `PlatformSetting::get($key, default)`, group by the prefix before the first `.` (or `risk` for `new_driver_max_liability`); append `pricing.item_size_modifiers` as a `read_only` entry. **Step 4 — PASS. Step 5 — commit** `feat(admin): read platform settings`.
 
 ### Task A6: `PATCH /admin/settings`
 
@@ -188,7 +193,7 @@ it('rejects keys not in the catalog', function () {
 });
 ```
 - [ ] **Step 2 — FAIL.**
-- [ ] **Step 3 — implement**: request validates each submitted key ∈ `SettingsCatalog::KEYS`, casts per `type`, enforces min/max; controller writes via `PlatformSetting::set($key, $value, $admin->id)` (already audits `updated_by_admin_id` + busts cache). Return the refreshed settings (reuse `@index`).
+- [ ] **Step 3 — implement**: request validates each submitted key ∈ `SettingsCatalog::KEYS`, casts per `type`, enforces min/max. **`PlatformSetting::set()` does not persist `type`** — so add an optional `?string $type = null` param to `set()` (backward-compatible; existing callers omit it) and pass the catalog `type`, so a missing row is created with the correct cast. Controller calls `PlatformSetting::set($key, $value, $admin->id, $catalogType)` (audits `updated_by_admin_id` + busts cache). Return the refreshed settings (reuse `@index`).
 - [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): update platform settings (audited, ranged)`.
 
 ### Task A7: Slice A verification
@@ -246,7 +251,7 @@ Schema::table('driver_strikes', fn (Blueprint $t) => $t->unique('public_id'));
 
 **Files:** `app/Http/Requests/Driver/VoidStrikeRequest.php`, `StrikeController@void`, `DriverStrikeService::void()`; `routes/api.php`. Test `tests/Feature/Admin/Driver/VoidStrikeTest.php`.
 
-- [ ] **Step 1 — failing test**: POST void `{void_reason:'emergency'}` flips `is_voided=true,voided_at,voided_by_admin_id`; **asserts driver account balances are UNCHANGED** (no fee reversal); voiding an already-voided strike is idempotent/422.
+- [ ] **Step 1 — failing test**: POST void `{void_reason:'emergency'}` flips `is_voided=true,voided_at,voided_by_admin_id`; **asserts driver account balances are UNCHANGED** (no fee reversal); voiding an **already-voided** strike returns **422** (repeated audit actions are visibly rejected).
 - [ ] **Step 2 — FAIL.**
 - [ ] **Step 3 — implement** `void(DriverStrike $strike, string $reason, int $adminId)` — pure status flip, no ledger touch. Bind `{strike:public_id}` and scope it to the path driver.
 - [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): void driver strike (status-only, no fee reversal)`.
@@ -258,18 +263,25 @@ Schema::table('driver_strikes', fn (Blueprint $t) => $t->unique('public_id'));
 - [ ] **Step 1 — failing test**:
 ```php
 it('applies an audited manual adjustment via the ledger', function () {
-    $driver = makeActiveDriverWithAccount(); // cash=0
+    $driver = makeActiveDriverWithAccount(['debt_balance' => '50.00']);
     app(DriverAccountLedgerService::class)->applyManualAdjustment(
         $driver, DriverAccountBucket::DebtBalance, '-25.00', $adminId = makeAdmin()->id, 'goodwill'
     );
     $acct = $driver->driverAccount()->first();
-    expect((string) $acct->debt_balance)->toBe('0.00'); // clamped ≥ 0 if it would go negative? see note
+    expect((string) $acct->debt_balance)->toBe('25.00');
     expect(DriverAccountTransaction::where('driver_id',$driver->id)
         ->where('reason','manual_adjustment')->where('created_by_admin_id',$adminId)->exists())->toBeTrue();
 });
+
+it('rejects an adjustment that would drive a bucket negative', function () {
+    $driver = makeActiveDriverWithAccount(['debt_balance' => '10.00']);
+    expect(fn () => app(DriverAccountLedgerService::class)->applyManualAdjustment(
+        $driver, DriverAccountBucket::DebtBalance, '-25.00', makeAdmin()->id, null
+    ))->toThrow(NegativeBucketException::class); // → 422 at the HTTP layer
+});
 ```
 - [ ] **Step 2 — FAIL.**
-- [ ] **Step 3 — implement**: widen private `mutateBucket(?Model $reference)` to nullable and only set `reference_type/_id` when non-null (existing callers pass a Model — unaffected). Add:
+- [ ] **Step 3 — implement**: widen private `mutateBucket(?Model $reference)` to nullable and only set `reference_type/_id` when non-null (existing callers pass a Model — unaffected). Add a new `NegativeBucketException` (rendered `422`). Add:
 ```php
 public function applyManualAdjustment(User $driver, DriverAccountBucket $bucket, string $amount, int $adminId, ?string $notes = null): void
 {
@@ -279,8 +291,8 @@ public function applyManualAdjustment(User $driver, DriverAccountBucket $bucket,
     });
 }
 ```
-Request validates `bucket ∈ DriverAccountBucket`, `amount` a signed 2-dp decimal, `note` optional. Controller calls the service with `$request->user()->id`.
-> **Note** (decide in test): buckets are non-negative (Critical Rule 5). If an adjustment would drive a bucket below 0, reject with 422 rather than clamp silently — keep the assertion explicit.
+Inside `applyManualAdjustment`, after locking the account, compute the projected bucket value; if `bccomp($projected,'0.00',2) === -1` **throw `NegativeBucketException` (422)** before mutating. Request validates `bucket ∈ DriverAccountBucket`, `amount` a signed 2-dp decimal, `note` optional. Controller calls the service with `$request->user()->id`.
+> **Rule (locked):** buckets are non-negative (Critical Rule 5). A signed adjustment that would drive the target bucket below 0 is **rejected with 422** — never clamped silently. The projected balance is checked under the `lockForUpdate()` before any write.
 - [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): audited manual driver account adjustment`.
 
 ### Task C7: Additive driver resource/filter fields
@@ -304,7 +316,7 @@ Request validates `bucket ∈ DriverAccountBucket`, `amount` a signed 2-dp decim
 
 - [ ] **Step 1 — failing test**: seed users (customer, driver, merchant, banned); admin GET paginates; `?search=`, `?account_status=`, `?role=driver` filter; rows expose `{id, name, account_status, roles[], phone_verified, email_verified, orders_count, joined, driver_public_id, merchant_public_id}`; non-admin forbidden.
 - [ ] **Step 2 — FAIL.**
-- [ ] **Step 3 — implement**: query `User` with `->with('roles','driverProfile','merchantProfile')`, filters — `account_status` exact; `role` via `whereHas('roles', name=…)`; `search` over `first_name/last_name/phone_number/email/public_id`; `orders_count` via `withCount(['ordersAsSender'])` (add the relation if missing — additive). Resource maps fields; `roles` = `getRoleNames()`. Paginate 25. Route in `admin/users` group (keep existing `lookup`).
+- [ ] **Step 3 — implement**: query `User` with `->with('roles','driverProfile','merchantProfile')`, filters — `account_status` exact; `role` via `whereHas('roles', name=…)`; `search` over `first_name/last_name/phone_number/email/public_id`. **`orders_count` = customer history = `withCount(['sentOrders','receivedOrders'])`** then summed in the resource (use the **existing** `User::sentOrders()` / `receivedOrders()` relations — there is no `ordersAsSender`). Resource maps fields; `roles` = `getRoleNames()`. Paginate 25. Route in `admin/users` group (keep existing `lookup`).
 - [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): users directory index`.
 
 ### Task B2: `GET /admin/users/{user}` detail
@@ -320,15 +332,19 @@ Request validates `bucket ∈ DriverAccountBucket`, `amount` a signed 2-dp decim
 
 - [ ] **Step 1 — failing test**: `?driver_public_id=` returns only that driver's orders; `?merchant_public_id=` only that merchant's; `?search=` matches order `public_id`/party name. Existing `status`/`type` filters still pass their current tests unchanged.
 - [ ] **Step 2 — FAIL.**
-- [ ] **Step 3 — implement**: add the three optional rules; in the controller resolve `driver_public_id`→`users.id` and `merchant_public_id`→`merchant_profiles.id` via `PublicIdResolver`, and add `->when(...)` clauses + a `search` `where` group. No change to existing behaviour when params absent.
+- [ ] **Step 3 — implement**: add the three optional rules. Resolve `driver_public_id`→`users.id` via the existing `PublicIdResolver::userId()`. **`PublicIdResolver` has no merchant method** — add an additive `PublicIdResolver::merchantProfileId(?string): ?int` (mirrors `userId()`, resolves `merchant_profiles.public_id`→`id`) and use it. Add `->when(...)` clauses + a `search` `where` group. No change to existing behaviour when params absent.
 - [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): additive order filters (driver/merchant/search)`.
 
-### Task B4: Merchant resource coverage (verify/additive)
+### Task B4: Merchant resource — enrich owner embed (additive)
 
-**Files:** Read `app/Http/Resources/MerchantResource.php`; if missing, add `commission_rate_override`, `driver_fee_cut_override`, default pickup, owner embed (`name/phone/account_status/roles`). Test `tests/Feature/Admin/Merchants/MerchantResourceTest.php`.
+`MerchantResource` **already** exposes `commission_rate_override`, `driver_fee_cut_override`, and default pickup. The gap is the **owner embed**, which is only `{id, name}`.
 
-- [ ] **Step 1 — failing test**: admin merchant show exposes the override rates (null when default), default pickup, and owner block.
-- [ ] **Step 2 — run.** If already present → mark **EXISTS**, no change, delete the redundant test. Else **Step 3 — implement** additively. **Step 4 — PASS. Step 5 — commit** `feat(admin): merchant resource override/pickup/owner fields` (or `chore: confirm merchant resource coverage`).
+**Files:** Modify `app/Http/Resources/MerchantResource.php` (owner block) and the merchant `show` controller (eager-load `user.roles`). Test `tests/Feature/Admin/Merchants/MerchantOwnerEmbedTest.php`.
+
+- [ ] **Step 1 — failing test**: admin merchant show exposes `owner` with `phone`, `account_status`, and `roles[]` (in addition to `id`/`name`).
+- [ ] **Step 2 — FAIL.**
+- [ ] **Step 3 — implement**: extend the `whenLoaded('user')` owner array with `phone => $merchant->user->phone_number`, `account_status => $merchant->user->account_status->value`, `roles => $merchant->user->getRoleNames()`; add `user.roles` to the controller's eager-load. Override rates + pickup unchanged.
+- [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): merchant owner embed (phone/account_status/roles)`.
 
 ### Task B5: Slice B verification — Pint, `DB_DATABASE=delivary_app_testing_codex vendor/bin/pest tests/Feature/Admin`, route checks, existing suite unchanged.
 
@@ -338,13 +354,15 @@ Request validates `bucket ∈ DriverAccountBucket`, `amount` a signed 2-dp decim
 
 Reuses `DriverOnboardingService` / `DriverDocumentService` / phone-verify under an admin gate. Drives the **full** lifecycle — no shortcut to `pending_approval` (spec §4.3).
 
-### Task D1: `POST /admin/drivers` (onboard / attach) + lookup
+Two explicit routes (the office FormRequests authorize `office_staff`, so admin needs its **own** admin-gated requests):
+- `POST /admin/drivers/lookup`
+- `POST /admin/drivers`
 
-**Files:** Create `app/Http/Controllers/Api/Admin/Driver/OnboardingController.php`, `app/Http/Requests/Driver/AdminOnboardDriverRequest.php`; `routes/api.php`. Test `tests/Feature/Admin/Driver/AdminOnboardTest.php`.
+**Files:** Create `app/Http/Controllers/Api/Admin/Driver/OnboardingController.php`, `app/Http/Requests/Driver/AdminOnboardDriverRequest.php`, `app/Http/Requests/Driver/AdminDriverLookupRequest.php` (both `authorize()` → `role:admin`); `routes/api.php`. Test `tests/Feature/Admin/Driver/AdminOnboardTest.php`.
 
-- [ ] **Step 1 — failing test**: `mode=existing` (by `user_public_id`) attaches a `pre_registered` profile + vehicle + office; `mode=new` creates user + profile; result is **`pre_registered`** (NOT `pending_approval`); attaching to an already-driver user 422; banned user rejected.
+- [ ] **Step 1 — failing test**: `POST /admin/drivers/lookup` resolves an existing user by phone; `POST /admin/drivers` with `mode=existing` (by `user_public_id`) attaches a `pre_registered` profile + vehicle + office; `mode=new` creates user + profile; result is **`pre_registered`** (NOT `pending_approval`); attaching to an already-driver user 422; banned user rejected.
 - [ ] **Step 2 — FAIL.**
-- [ ] **Step 3 — implement**: controller authorises `role:admin`, resolves/creates the user, then calls the existing `DriverOnboardingService` onboarding path (same one office uses) with the admin as actor. Do **not** add a new state path. Mirror office `lookup` for the user picker.
+- [ ] **Step 3 — implement**: admin-gated controller + FormRequests, resolves/creates the user, then calls the existing `DriverOnboardingService` onboarding path (same one office uses) with the admin as actor. Do **not** add a new state path.
 - [ ] **Step 4 — PASS. Step 5 — commit** `feat(admin): admin driver onboarding (reuses office lifecycle)`.
 
 ### Task D2: `POST /admin/drivers/{driverUser}/verify-phone`, `documents` (+delete), `submit`
