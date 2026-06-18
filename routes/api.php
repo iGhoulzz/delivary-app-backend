@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\Admin\AdminUserLookupController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
+use App\Http\Controllers\Api\Admin\MapOverviewController;
 use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Api\Admin\ReferenceController;
@@ -290,6 +291,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     ->name('admin.')
     ->group(function (): void {
         Route::get('reference', ReferenceController::class)->name('reference');
+        Route::get('map/overview', MapOverviewController::class)->name('map.overview');
     });
 
 // /admin/users - admin account moderation
