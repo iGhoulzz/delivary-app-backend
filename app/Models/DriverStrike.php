@@ -9,11 +9,13 @@ use App\Enums\DriverStrikeReason;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;
 
 final class DriverStrike extends Model
 {
     /** @var array<int, string> */
     protected $fillable = [
+        'public_id',
         'driver_id', 'order_id',
         'reason', 'fee_amount',
         'issued_by', 'issued_by_admin_id',
@@ -30,6 +32,18 @@ final class DriverStrike extends Model
             'is_voided' => 'boolean',
             'voided_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        self::creating(static function (self $strike): void {
+            $strike->public_id ??= (string) Str::ulid();
+        });
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'public_id';
     }
 
     public function driver(): BelongsTo
