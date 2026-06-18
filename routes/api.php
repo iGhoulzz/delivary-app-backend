@@ -210,6 +210,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     Route::post('{driverUser:public_id}/suspend', [AdminDriverController::class, 'suspend']);
     Route::post('{driverUser:public_id}/reinstate', [AdminDriverController::class, 'reinstate']);
     Route::get('{driverUser:public_id}/account', [AdminDriverAccountController::class, 'show']);
+    Route::post('{driverUser:public_id}/account/adjust', [AdminDriverAccountController::class, 'adjust']);
     Route::get('{driverUser:public_id}/strikes', [AdminDriverStrikeController::class, 'index']);
     Route::post('{driverUser:public_id}/strikes', [AdminDriverStrikeController::class, 'store']);
     Route::post('{driverUser:public_id}/strikes/{strike:public_id}/void', [AdminDriverStrikeController::class, 'void']);
