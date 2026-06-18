@@ -25,15 +25,15 @@ final class SettingsCatalog
      * @var array<string, array{type: string, group: string, min?: float|int, max?: float|int}>
      */
     private const EDITABLE = [
-        'pricing.item_commission_rate'    => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0, 'max' => 1],
-        'pricing.driver_fee_cut_rate'     => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0, 'max' => 1],
-        'pricing.free_km'                 => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0],
-        'pricing.per_km_rate'             => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0],
-        'payouts.clearance_hours'         => ['type' => 'integer', 'group' => 'payouts', 'min' => 0],
-        'payouts.min_amount'              => ['type' => 'decimal', 'group' => 'payouts', 'min' => 0],
-        'payouts.allow_partial'           => ['type' => 'boolean', 'group' => 'payouts'],
+        'pricing.item_commission_rate' => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0, 'max' => 1],
+        'pricing.driver_fee_cut_rate' => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0, 'max' => 1],
+        'pricing.free_km' => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0],
+        'pricing.per_km_rate' => ['type' => 'decimal', 'group' => 'pricing', 'min' => 0],
+        'payouts.clearance_hours' => ['type' => 'integer', 'group' => 'payouts', 'min' => 0],
+        'payouts.min_amount' => ['type' => 'decimal', 'group' => 'payouts', 'min' => 0],
+        'payouts.allow_partial' => ['type' => 'boolean', 'group' => 'payouts'],
         'settlement.reverse_window_hours' => ['type' => 'integer', 'group' => 'settlement', 'min' => 0],
-        'new_driver_max_liability'        => ['type' => 'decimal', 'group' => 'risk', 'min' => 0],
+        'new_driver_max_liability' => ['type' => 'decimal', 'group' => 'risk', 'min' => 0],
     ];
 
     /** Keys surfaced read-only by the read endpoint (not editable). */
