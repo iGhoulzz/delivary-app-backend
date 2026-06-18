@@ -211,6 +211,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     Route::post('{driverUser:public_id}/reinstate', [AdminDriverController::class, 'reinstate']);
     Route::get('{driverUser:public_id}/account', [AdminDriverAccountController::class, 'show']);
     Route::get('{driverUser:public_id}/strikes', [AdminDriverStrikeController::class, 'index']);
+    Route::post('{driverUser:public_id}/strikes', [AdminDriverStrikeController::class, 'store']);
 });
 
 // /admin/orders - admin order lifecycle management
