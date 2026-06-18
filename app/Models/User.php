@@ -196,6 +196,11 @@ class User extends Authenticatable implements HasMedia, Wallet, WalletFloat
         return $this->hasMany(DriverAccountTransaction::class, 'driver_id');
     }
 
+    public function strikes(): HasMany
+    {
+        return $this->hasMany(DriverStrike::class, 'driver_id');
+    }
+
     public function moderationActions(): HasMany
     {
         return $this->hasMany(AccountModerationAction::class, 'user_id');

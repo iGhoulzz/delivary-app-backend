@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\Admin\Driver;
 use App\Enums\DriverStrikeReason;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Driver\AddStrikeRequest;
+use App\Http\Requests\Driver\VoidStrikeRequest;
 use App\Http\Resources\Driver\DriverStrikeResource;
 use App\Models\DriverStrike;
 use App\Models\User;
@@ -50,5 +51,24 @@ final class StrikeController extends Controller
         return response()->json([
             'strike' => (new DriverStrikeResource($strike))->resolve($request),
         ], 201);
+    }
+
+    public function void(VoidStrikeRequest $request, User $driverUser, DriverStrike $strike): JsonResponse
+    {
+        abort_unless($strike->driver_id === $driverUser->id, 404);
+
+        if ($strike->is_voided) {
+            return response()->json(['error' => 'strike_already_voided'], 422);
+        }
+
+        $strike = $this->service->void(
+            $strike,
+            (string) $request->input('void_reason'),
+            (int) $request->user()->id,
+        );
+
+        return response()->json([
+            'strike' => (new DriverStrikeResource($strike->loadMissing('order')))->resolve($request),
+        ]);
     }
 }
