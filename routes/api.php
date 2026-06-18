@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\Admin\AdminUserLookupController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
+use App\Http\Controllers\Api\Admin\ReferenceController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as AdminSettlementListSellerPayoutsController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as AdminSettlementListSettlementsController;
 use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as AdminSettlementReverseSettlementController;
@@ -281,6 +282,14 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::post('/{staff}/reset-temp-password', [StaffController::class, 'resetTempPassword'])->name('reset-temp-password');
         Route::post('/{staff}/office-assignments', [OfficeAssignmentController::class, 'store'])->name('office-assignments.store');
         Route::delete('/{staff}/office-assignments/{assignment}', [OfficeAssignmentController::class, 'destroy'])->name('office-assignments.destroy');
+    });
+
+// ─── /admin — dashboard support: reference data, map, platform settings ──
+Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required'])
+    ->prefix('admin')
+    ->name('admin.')
+    ->group(function (): void {
+        Route::get('reference', ReferenceController::class)->name('reference');
     });
 
 // /admin/users - admin account moderation
