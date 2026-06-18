@@ -23,6 +23,8 @@ final class MeController extends Controller
             'user' => (new UserResource($user))->resolve($request),
             'roles' => $user->getRoleNames()->values(),
             'must_change_password' => (bool) $user->must_change_password,
+            'is_driver' => $user->isDriver(),
+            'is_merchant' => $user->isMerchant(),
             'office_assignments' => $user->activeOfficeAssignments()
                 ->with('office')
                 ->get()

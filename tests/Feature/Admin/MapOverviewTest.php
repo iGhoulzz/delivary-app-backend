@@ -25,6 +25,7 @@ it('returns offices and active drivers for the map', function (): void {
         'drivers' => [['id', 'name', 'activity_status', 'location' => ['lat', 'lng'], 'active_load']],
     ]);
     expect($response->json('drivers'))->toHaveCount(1);
+    expect($response->json('drivers.0.active_load'))->toBe(0);
     expect($response->json('offices'))->not->toBeEmpty();
 });
 

@@ -34,7 +34,7 @@ final class MapOverviewController extends Controller
             ])
             ->values();
 
-        $drivers = DriverProfile::query()
+        $profiles = DriverProfile::query()
             ->where('status', DriverStatus::Active->value)
             ->whereIn('activity_status', [
                 DriverActivityStatus::Online->value,
@@ -42,17 +42,23 @@ final class MapOverviewController extends Controller
             ])
             ->whereNotNull('current_location')
             ->with('user')
-            ->get()
-            ->map(fn (DriverProfile $profile): array => [
-                'id' => $profile->user?->public_id,
-                'name' => $profile->user?->fullName(),
-                'activity_status' => $profile->activity_status->value,
-                'location' => self::point($profile->current_location),
-                'active_load' => $profile->user !== null
-                    ? Order::query()->forDriver($profile->user->id)->activeForDriver()->count()
-                    : 0,
-            ])
-            ->values();
+            ->get();
+
+        // One grouped query for active loads instead of a count() per driver.
+        $loadByDriverId = Order::query()
+            ->activeForDriver()
+            ->whereIn('driver_id', $profiles->pluck('user_id')->filter()->all())
+            ->selectRaw('driver_id, count(*) as aggregate')
+            ->groupBy('driver_id')
+            ->pluck('aggregate', 'driver_id');
+
+        $drivers = $profiles->map(fn (DriverProfile $profile): array => [
+            'id' => $profile->user?->public_id,
+            'name' => $profile->user?->fullName(),
+            'activity_status' => $profile->activity_status->value,
+            'location' => self::point($profile->current_location),
+            'active_load' => (int) ($loadByDriverId[$profile->user_id] ?? 0),
+        ])->values();
 
         return response()->json([
             'offices' => $offices,

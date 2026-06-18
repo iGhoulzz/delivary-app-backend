@@ -23,10 +23,14 @@ it('enriches /auth/me with roles, password flag, office assignments and counts',
         'user' => ['id'],
         'roles',
         'must_change_password',
+        'is_driver',
+        'is_merchant',
         'office_assignments',
         'counts' => ['pending_orders', 'unread_notifications'],
     ]);
     expect($response->json('roles'))->toContain('admin');
     expect($response->json('must_change_password'))->toBeFalse();
+    expect($response->json('is_driver'))->toBeFalse();
+    expect($response->json('is_merchant'))->toBeFalse();
     expect($response->json('counts.pending_orders'))->toBeInt();
 });

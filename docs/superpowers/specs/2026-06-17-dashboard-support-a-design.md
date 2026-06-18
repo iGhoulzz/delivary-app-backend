@@ -31,8 +31,11 @@ action to an existing endpoint. The gaps below are the result.
 - **`public_id` only** in URLs and payloads (Critical Rule 11). Reference tables `regions` /
   `service_areas` keep numeric ids (established exception).
 - **Bilingual is a frontend concern.** The backend returns enum *values* + raw strings; the
-  frontend dictionary maps EN/AR. Exception: the reference endpoint may serve enum option lists
-  (value + both labels) so dropdowns stay in sync.
+  frontend dictionary owns EN/AR display, keyed by value. The reference endpoint therefore serves
+  enum options as `{value, label}` — `label` is an **English convenience label only** (the enum's
+  `label()`), present for debugging/admin tooling; the authoritative contract is the **value set**,
+  which keeps frontend dropdowns in sync with backend enums. The backend does **not** emit Arabic
+  labels (no `label_ar`) — that would duplicate the frontend dictionary.
 
 ## 3. Out of scope (deferred)
 
@@ -64,7 +67,7 @@ no behaviour change · **EXISTS** = already shipped · **DROP** = explicitly not
 | Method · Path | Kind | Notes |
 |---|---|---|
 | `GET /auth/me` | **ADDITIVE** | Enrich response: `roles[]`, `must_change_password`, `office_assignments[]` (id+name), `is_driver`/`is_merchant` summary, badge **counts** (`pending_orders`, `unread_notifications`). Existing `user` block unchanged. |
-| `GET /admin/reference` | **NEW** | Read-only catalogs: `offices[]`, `regions[]`, enum option lists (driver status, account status, merchant status, order status/type, strike reason, moderation reason, vehicle type, document type), each `{value, label_en, label_ar}`. |
+| `GET /admin/reference` | **NEW** | Read-only catalogs: `offices[]`, `regions[]`, enum option lists (driver status, account status, merchant status, order status/type, strike reason, moderation reason, vehicle type, document type), each `{value, label}` (English convenience label; frontend owns AR/EN display keyed by value). |
 | `GET /admin/map/overview` | **NEW** | Office pins + active drivers (`driver_profiles.current_location`, `activity_status`, live load count). Reads existing columns; **no new tables**. |
 
 ### 4.2 Drivers
