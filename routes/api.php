@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\Admin\AdminUserLookupController;
+use App\Http\Controllers\Api\Admin\Driver\AccountController as AdminDriverAccountController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\MapOverviewController;
 use App\Http\Controllers\Api\Admin\MerchantController;
@@ -207,6 +208,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     Route::post('{driverUser:public_id}/reject', [AdminDriverController::class, 'reject']);
     Route::post('{driverUser:public_id}/suspend', [AdminDriverController::class, 'suspend']);
     Route::post('{driverUser:public_id}/reinstate', [AdminDriverController::class, 'reinstate']);
+    Route::get('{driverUser:public_id}/account', [AdminDriverAccountController::class, 'show']);
 });
 
 // /admin/orders - admin order lifecycle management
