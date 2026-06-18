@@ -294,6 +294,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::get('reference', ReferenceController::class)->name('reference');
         Route::get('map/overview', MapOverviewController::class)->name('map.overview');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings.index');
+        Route::patch('settings', [SettingsController::class, 'update'])->name('settings.update');
     });
 
 // /admin/users - admin account moderation

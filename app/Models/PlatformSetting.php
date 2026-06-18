@@ -29,11 +29,14 @@ final class PlatformSetting extends Model
         );
     }
 
-    public static function set(string $key, mixed $value, ?int $adminId = null): self
+    public static function set(string $key, mixed $value, ?int $adminId = null, ?string $type = null): self
     {
         $setting = self::query()->firstOrNew(['key' => $key]);
         $setting->value = is_scalar($value) ? (string) $value : (string) json_encode($value);
         $setting->updated_by_admin_id = $adminId;
+        if ($type !== null) {
+            $setting->type = $type;
+        }
         $setting->save();
 
         Cache::forget(self::CACHE_PREFIX.$key);

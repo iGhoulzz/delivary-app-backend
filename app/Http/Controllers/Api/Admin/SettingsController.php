@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\UpdateSettingsRequest;
 use App\Models\PlatformSetting;
 use App\Support\SettingsCatalog;
 use Illuminate\Http\JsonResponse;
@@ -18,6 +19,28 @@ final class SettingsController extends Controller
     public function index(): JsonResponse
     {
         return response()->json($this->payload());
+    }
+
+    public function update(UpdateSettingsRequest $request): JsonResponse
+    {
+        $adminId = (int) $request->user()->id;
+
+        foreach ($request->validated()['settings'] as $row) {
+            $meta = SettingsCatalog::meta($row['key']);
+            // Guaranteed non-null: the request rejects keys outside the catalog.
+            PlatformSetting::set($row['key'], $this->castValue($row['value'], $meta['type']), $adminId, $meta['type']);
+        }
+
+        return response()->json($this->payload());
+    }
+
+    private function castValue(mixed $value, string $type): string|int
+    {
+        return match ($type) {
+            'integer' => (int) $value,
+            'boolean' => (bool) $value ? '1' : '0',
+            default => (string) $value, // decimal stored as a numeric string
+        };
     }
 
     /**
