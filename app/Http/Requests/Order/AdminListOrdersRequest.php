@@ -24,6 +24,9 @@ final class AdminListOrdersRequest extends FormRequest
         return [
             'status' => ['sometimes', Rule::in(array_column(OrderStatus::cases(), 'value'))],
             'type' => ['sometimes', Rule::in(array_column(OrderType::cases(), 'value'))],
+            'search' => ['sometimes', 'string', 'max:120'],
+            'driver_public_id' => ['sometimes', 'string', 'exists:users,public_id'],
+            'merchant_public_id' => ['sometimes', 'string', 'exists:merchant_profiles,public_id'],
             'per_page' => ['sometimes', 'integer', 'between:1,100'],
         ];
     }

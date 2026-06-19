@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support\Resolvers;
 
+use App\Models\MerchantProfile;
 use App\Models\OfficeLocation;
 use App\Models\User;
 
@@ -25,5 +26,14 @@ final class PublicIdResolver
         }
 
         return (int) User::query()->where('public_id', $publicId)->valueOrFail('id');
+    }
+
+    public static function merchantProfileId(?string $publicId): ?int
+    {
+        if ($publicId === null || $publicId === '') {
+            return null;
+        }
+
+        return (int) MerchantProfile::query()->where('public_id', $publicId)->valueOrFail('id');
     }
 }

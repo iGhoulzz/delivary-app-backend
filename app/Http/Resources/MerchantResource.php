@@ -31,6 +31,9 @@ final class MerchantResource extends JsonResource
             'owner' => $this->whenLoaded('user', fn (): array => [
                 'id' => $merchant->user->public_id,
                 'name' => $merchant->user->fullName(),
+                'phone' => $merchant->user->phone_number,
+                'account_status' => $merchant->user->account_status->value,
+                'roles' => $merchant->user->getRoleNames()->values()->all(),
             ]),
             'approved_at' => $merchant->approved_at?->toIso8601String(),
             'created_at' => $merchant->created_at?->toIso8601String(),
