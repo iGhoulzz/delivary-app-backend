@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** ✅ IMPLEMENTED — merged to `main` 2026-06-18 (PRs #19/#20); full suite 310/310, Pint clean.
+
 **Goal:** Add the admin-only backend endpoints the built dashboard binds to, strictly additively, so the frontend builds on stable contracts.
 
 **Architecture:** New admin controllers/resources/services + a handful of additive fields/optional-params on existing files. No refactor of shipped logic; money writes reuse the locked+ledgered `DriverAccountLedgerService`. Spec: `docs/superpowers/specs/2026-06-17-dashboard-support-a-design.md`. Process: `docs/WORKFLOW.md`.
