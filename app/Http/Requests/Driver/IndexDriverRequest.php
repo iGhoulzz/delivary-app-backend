@@ -19,6 +19,7 @@ final class IndexDriverRequest extends FormRequest
     {
         return [
             'status' => ['sometimes', 'string'],
+            'activity_status' => ['sometimes', 'string'],
             'search' => ['sometimes', 'string', 'max:120'],
             'office_public_id' => ['sometimes', 'string', 'exists:office_locations,public_id'],
         ];

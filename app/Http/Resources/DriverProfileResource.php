@@ -31,6 +31,7 @@ final class DriverProfileResource extends JsonResource
                 ? ['id' => $this->office->public_id, 'name' => $this->office->name]
                 : null,
             'status' => $this->status->value,
+            'account_status' => $this->user?->account_status?->value,
             'activity_status' => $this->activity_status->value,
             'vehicle_type' => $this->vehicle_type->value,
             'vehicle_plate' => $this->vehicle_plate,
