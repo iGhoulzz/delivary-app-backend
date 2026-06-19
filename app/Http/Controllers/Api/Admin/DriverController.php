@@ -30,6 +30,7 @@ final class DriverController extends Controller
             ->with(DriverProfileResource::RELATIONS)
             ->when($request->input('status'), fn ($q, $s) => $q->where('status', (string) $s))
             ->when($request->officeId(), fn ($q, $id) => $q->where('office_id', $id))
+            ->when($request->input('activity_status'), fn ($q, $s) => $q->where('activity_status', (string) $s))
             ->orderByRaw("CASE status WHEN 'pending_approval' THEN 0 ELSE 1 END")
             ->oldest();
 

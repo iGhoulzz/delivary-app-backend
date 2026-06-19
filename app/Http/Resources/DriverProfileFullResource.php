@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Resources;
 
+use App\Enums\OrderStatus;
 use App\Models\DriverProfile;
+use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -17,7 +19,7 @@ final class DriverProfileFullResource extends JsonResource
      *
      * @var array<int, string>
      */
-    public const RELATIONS = ['user', 'office', 'approvedBy', 'documents.driver.media'];
+    public const RELATIONS = ['user', 'user.driverRegions', 'office', 'approvedBy', 'documents.driver.media'];
 
     /** @return array<string, mixed> */
     public function toArray(Request $request): array
@@ -57,6 +59,38 @@ final class DriverProfileFullResource extends JsonResource
             'lifetime_deliveries' => $this->lifetime_deliveries,
             'rating_average' => $this->rating_average,
             'notes' => $this->notes,
+            'last_active_at' => $this->last_active_at?->toIso8601String(),
+            'deliveries_today' => $this->deliveriesToday(),
+            'orders_as_customer_count' => $this->ordersAsCustomerCount(),
+            'roles' => $this->user?->getRoleNames() ?? [],
+            'regions' => $this->relationLoaded('user') && $this->user !== null
+                ? $this->user->driverRegions->map(fn ($region): array => ['id' => $region->id, 'name' => $region->name])->values()
+                : [],
+            'notification_prefs' => [
+                'push' => (bool) $this->user?->push_notifications_enabled,
+                'sms' => (bool) $this->user?->sms_notifications_enabled,
+                'email' => (bool) $this->user?->email_notifications_enabled,
+            ],
         ];
+    }
+
+    private function deliveriesToday(): int
+    {
+        return Order::query()
+            ->where('driver_id', $this->user_id)
+            ->where('status', OrderStatus::Delivered->value)
+            ->whereDate('delivered_at', today())
+            ->count();
+    }
+
+    private function ordersAsCustomerCount(): int
+    {
+        $user = $this->user;
+
+        if ($user === null) {
+            return 0;
+        }
+
+        return $user->sentOrders()->count() + $user->receivedOrders()->count();
     }
 }
