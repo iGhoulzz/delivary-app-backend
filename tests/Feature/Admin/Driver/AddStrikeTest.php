@@ -46,6 +46,7 @@ it('adds a manual strike with no fee and writes no ledger row', function (): voi
 
     $driver = User::factory()->create();
     $driver->assignRole('driver');
+    DriverProfile::factory()->create(['user_id' => $driver->id]);
 
     $this->postJson("/api/admin/drivers/{$driver->public_id}/strikes", [
         'reason' => 'manual_admin',
@@ -53,6 +54,19 @@ it('adds a manual strike with no fee and writes no ledger row', function (): voi
     ])->assertStatus(201);
 
     expect(DriverAccountTransaction::where('driver_id', $driver->id)->exists())->toBeFalse();
+});
+
+it('404s when the target user is not a driver', function (): void {
+    $admin = User::factory()->create(['must_change_password' => false]);
+    $admin->assignRole('admin');
+    Sanctum::actingAs($admin);
+
+    $user = User::factory()->create(); // no driver profile
+
+    $this->postJson("/api/admin/drivers/{$user->public_id}/strikes", [
+        'reason' => 'manual_admin',
+        'fee' => 0,
+    ])->assertStatus(404);
 });
 
 it('rejects an invalid strike reason', function (): void {

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Models\DriverProfile;
 use App\Models\DriverStrike;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -22,6 +23,7 @@ it('lists strikes with an active_count for an admin', function (): void {
 
     $driver = User::factory()->create();
     $driver->assignRole('driver');
+    DriverProfile::factory()->create(['user_id' => $driver->id]);
 
     DriverStrike::create([
         'driver_id' => $driver->id,

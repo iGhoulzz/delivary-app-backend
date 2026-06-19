@@ -52,6 +52,8 @@ it('returns 422 when voiding an already-voided strike', function (): void {
     Sanctum::actingAs($admin);
 
     $driver = User::factory()->create();
+    $driver->assignRole('driver');
+    DriverProfile::factory()->create(['user_id' => $driver->id]);
 
     $strike = DriverStrike::create([
         'driver_id' => $driver->id,

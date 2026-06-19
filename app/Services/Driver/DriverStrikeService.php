@@ -7,6 +7,7 @@ namespace App\Services\Driver;
 use App\Enums\DriverAccountTransactionReason;
 use App\Enums\DriverStrikeIssuer;
 use App\Enums\DriverStrikeReason;
+use App\Exceptions\Driver\StrikeAlreadyVoidedException;
 use App\Models\DriverStrike;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -46,13 +47,22 @@ final class DriverStrikeService
      */
     public function void(DriverStrike $strike, string $reason, int $adminId): DriverStrike
     {
-        $strike->forceFill([
-            'is_voided' => true,
-            'voided_at' => now(),
-            'voided_by_admin_id' => $adminId,
-            'void_reason' => $reason,
-        ])->save();
+        return DB::transaction(function () use ($strike, $reason, $adminId): DriverStrike {
+            // Lock + re-read so two concurrent voids cannot both pass the guard.
+            $locked = DriverStrike::query()->whereKey($strike->getKey())->lockForUpdate()->firstOrFail();
 
-        return $strike;
+            if ($locked->is_voided) {
+                throw new StrikeAlreadyVoidedException;
+            }
+
+            $locked->forceFill([
+                'is_voided' => true,
+                'voided_at' => now(),
+                'voided_by_admin_id' => $adminId,
+                'void_reason' => $reason,
+            ])->save();
+
+            return $locked;
+        });
     }
 }

@@ -20,6 +20,8 @@ final class StrikeController extends Controller
 
     public function index(User $driverUser): JsonResponse
     {
+        abort_unless($driverUser->driverProfile !== null, 404);
+
         $strikes = DriverStrike::query()
             ->forDriver($driverUser->id)
             ->with('order')
@@ -40,6 +42,8 @@ final class StrikeController extends Controller
 
     public function store(AddStrikeRequest $request, User $driverUser): JsonResponse
     {
+        abort_unless($driverUser->driverProfile !== null, 404);
+
         $strike = $this->service->addManual(
             $driverUser,
             DriverStrikeReason::from((string) $request->input('reason')),
@@ -55,11 +59,8 @@ final class StrikeController extends Controller
 
     public function void(VoidStrikeRequest $request, User $driverUser, DriverStrike $strike): JsonResponse
     {
+        abort_unless($driverUser->driverProfile !== null, 404);
         abort_unless($strike->driver_id === $driverUser->id, 404);
-
-        if ($strike->is_voided) {
-            return response()->json(['error' => 'strike_already_voided'], 422);
-        }
 
         $strike = $this->service->void(
             $strike,
