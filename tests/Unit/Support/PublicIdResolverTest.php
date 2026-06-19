@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Models\MerchantProfile;
 use App\Models\OfficeLocation;
 use App\Models\Region;
 use App\Models\ServiceArea;
@@ -45,4 +46,11 @@ it('resolves an office public_id to its internal id', function (): void {
 
     expect(PublicIdResolver::officeId($office->public_id))->toBe($office->id);
     expect(PublicIdResolver::officeId(null))->toBeNull();
+});
+
+it('resolves a merchant profile public_id to its internal id', function (): void {
+    $merchant = MerchantProfile::factory()->create();
+
+    expect(PublicIdResolver::merchantProfileId($merchant->public_id))->toBe($merchant->id);
+    expect(PublicIdResolver::merchantProfileId(null))->toBeNull();
 });
