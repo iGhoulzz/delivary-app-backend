@@ -208,13 +208,14 @@ Platform never pays out money it doesn't have. Sellers see status at every stage
 
 ### 4.10 Payouts
 
-- Seller earnings sit in the seller's **Bavix wallet** until the seller chooses to act on them.
-- **On-demand** seller requests cash from the wallet (admin manually approves, 1-3 business days).
-- **Single payout method: cash pickup at office.** The seller selects the pickup office at request time, admin approves, seller comes in person, agent debits the Bavix wallet by the requested amount and hands over physical cash. **No bank transfers, no off-platform disbursements.** The `payout_method` discriminator is retained at the schema level so future methods (e.g. mobile money) can be added without a migration.
-- Sellers may leave their balance in the wallet indefinitely — there is no forced payout cadence. The wallet itself acts as the seller's holding account.
-- Minimum payout: 20 LYD (admin-configurable in `platform_settings`).
-- Partial payouts are permitted — a seller may request any amount ≤ their available wallet balance and ≥ the minimum. Full-balance withdrawal is the typical case but not enforced.
-- All payouts logged with full audit trail (request → approval → cash handover → completion, or rejection).
+> **Corrected 2026-06-18 to the implemented model.** The original draft described a rejected Bavix-wallet + admin-approval design; what shipped (see §17.11) is `seller_earnings` rows + office-staff counter handover.
+
+- Seller earnings are tracked as **`seller_earnings` rows** (one per sale order), advancing `pending_settlement → pending_clearance → available` (48h clearance, `payouts.clearance_hours`). They are **not** held in a Bavix wallet — Bavix is reserved for future user top-ups / online payments and is currently dormant. A seller's available balance = SUM of `available` earnings.
+- **Single payout method: cash pickup at office.** A seller with available earnings visits a chosen office; **office staff** (not admin) process the payout at the counter — server-recompute the total, flip the selected earnings to `paid_out`, write a `seller_payouts` row (`paid_by_staff_id`) + `seller_payout_orders` pivot, and hand over physical cash. **No bank transfers, no off-platform disbursements, no admin pre-approval.** The `payout_method` discriminator is kept at the schema level so future methods (e.g. mobile money) can be added without a migration.
+- Counter identity verification is **visual** (no payout codes).
+- Minimum payout: 20 LYD (`payouts.min_amount`, admin-configurable). Partial payouts allowed (≥ minimum, ≤ available).
+- Admins **review + can reverse** a settlement (immutable correcting-twin) while every contributing earning is still `pending_clearance`; admins do not create payouts.
+- Each `seller_payouts` row is the receipt / audit record.
 
 ### 4.11 Driver Cancellation Fee
 
@@ -1312,6 +1313,35 @@ All groups also carry `staff.password_change_required`; `{merchant}` is `public_
 **Housekeeping:** `composer.json` floor aligned to PHP `^8.4` (+ lock refresh) — locked Symfony 8 / collision 8.9 require ≥8.4.
 
 **Verified on merged `main`:** full Pest suite **261/261** green (incl. `tests/Feature/Smoke/MerchantDeliveryTest` full lifecycle: onboard → order → deliver → seller-earning → settle → payout), Pint clean, security review (no HIGH/MEDIUM — authz scoping, public_id discipline, financial-snapshot immutability, mass-assignment whitelisting all sound).
+
+### 17.18 Dashboard Support A milestone (admin-only) (2026-06-18) ✅
+
+Backend-first milestone that stabilised the admin API contract for the internal dashboard **before** building the Vue 3 frontend — the dashboard UI was already designed (`docs/design/dashboard/`), so this added the endpoints the screens bind to, then the frontend builds against real shapes. **Strictly additive**: new controllers/resources/services + a few new fields / optional query-params / one nullable column, with **zero changes to existing endpoint behaviour** (proof gate: the prior suite stayed green unchanged). Parallel-worktree build — Claude = Slices **A** (foundations + settings) + **C** (driver finance/strikes); Codex = **B** (users/orders/merchants) + **D** (admin onboarding); cross-reviewed both directions; PRs #19 (Codex B+D) / #20 (Claude A+C). Spec `docs/superpowers/specs/2026-06-17-dashboard-support-a-design.md`, plan `docs/superpowers/plans/2026-06-17-dashboard-support-a.md`, process `docs/WORKFLOW.md`.
+
+**Endpoints shipped** (all `sanctum` + `role:admin` + `staff.password_change_required`):
+
+| Endpoint | Method | Slice |
+|---|---|---|
+| `/api/auth/me` — enriched (roles, must_change_password, office_assignments, is_driver/merchant, badge counts) | GET | A |
+| `/api/admin/reference` — offices, regions, enum catalogs | GET | A |
+| `/api/admin/map/overview` — office pins + active drivers | GET | A |
+| `/api/admin/settings` — curated platform-settings allowlist | GET / PATCH | A |
+| `/api/admin/users` (directory) · `/api/admin/users/{user}` (detail) | GET | B |
+| `/api/admin/orders` — + `driver_public_id` / `merchant_public_id` / `search` filters | GET | B |
+| `/api/admin/drivers/{id}/account` — 3 buckets + recent ledger | GET | C |
+| `/api/admin/drivers/{id}/account/adjust` — audited manual adjustment | POST | C |
+| `/api/admin/drivers/{id}/strikes` (+ `active_count`) | GET | C |
+| `/api/admin/drivers/{id}/strikes` — add manual (optional fee → ledger) | POST | C |
+| `/api/admin/drivers/{id}/strikes/{strike}/void` — status-only, no fee reversal | POST | C |
+| `/api/admin/drivers` onboarding — `lookup`, `onboard`, `{id}/verify-phone`, `{id}/documents` (POST/DELETE), `{id}/submit` | POST/DELETE | D |
+
+**Locked decisions:** office cash-writes (settle/payout) stay **office-only**, read-only on admin pages; strike **void is a status-flip only — never an implicit fee reversal** (a refund is a separate explicit manual adjustment); **manual adjustment** = new `DriverAccountLedgerService::applyManualAdjustment()` (locked + ledgered, **422 if a bucket would go negative** — Critical Rule 5); strikes restricted to real drivers (404 otherwise) with the already-voided check **under a row lock**; admin onboarding **reuses the full office lifecycle** (`pre_registered → docs → in-office OTP → submit → pending_approval`) — no shortcut; reference enum options are `{value, label}` (**frontend owns AR/EN**, keyed by value); merchant moderation has **no audit table** (minimal model); base delivery fee is **per-region** (`regions.base_fee`), not a global platform setting; **force-offline dropped** (suspend already cascades offline).
+
+**Schema delta:** one additive migration — `driver_strikes.public_id` (ULID, for the void URL per Rule 11). Additive service/model changes: `DriverAccountLedgerService::applyManualAdjustment()` + `mutateBucket($reference)` widened nullable (backward-compatible); `PlatformSetting::set()` gained optional `$type`; `PublicIdResolver::merchantProfileId()`; `User::strikes()`; additive fields on `DriverProfileResource`/`DriverProfileFullResource` + `activity_status` list filter; richer `MerchantResource` owner embed; enriched `MeController`.
+
+**Deferred to "Dashboard Support B":** Overview KPI-summary cards + recent-activity feed; finance/revenue reporting; notification-preference *editing* (prefs are exposed read-only); admin-created orders.
+
+**Verified on merged `main`:** full Pest suite **310/310** (1036 assertions) green, Pint clean, `composer validate --strict` passed, 58 admin routes, `migrate:status` all ran.
 
 **End of Specification Document**
 

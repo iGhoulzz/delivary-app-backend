@@ -1,7 +1,7 @@
 # Dashboard Support A (Admin-only) — Backend Support for the Internal Dashboard
 
 **Date:** 2026-06-17
-**Status:** Design — revised after Codex review
+**Status:** ✅ IMPLEMENTED — merged to `main` 2026-06-18 (PRs #19 Codex B+D / #20 Claude A+C); full suite 310/310. See `SYSTEM_SPECIFICATION.md §17.18`.
 **Cut:** Admin-only (office-staff dashboard + office-context is a later cut)
 **Design source:** `docs/design/dashboard/` (the built bilingual EN/AR "Tawseel Ops Console")
 

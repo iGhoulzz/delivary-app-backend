@@ -1034,3 +1034,21 @@ Next after Claude Slice A merges:
 - `vendor\bin\pest --filter=Staff`
 - `php artisan tinker --execute="require base_path('scripts/moderation-e2e.php');"`
 - Run staff and orders smoke scripts for regression.
+
+---
+
+## 2026-06-18 Dashboard Support A — Admin backend for the internal dashboard
+
+Backend-first, **additive-only** milestone preparing the admin API for the Vue dashboard (UI already designed in `docs/design/dashboard/`). Parallel-worktree: Claude = Slices A (foundations + settings) + C (driver finance/strikes); Codex = B (users/orders/merchants) + D (admin onboarding). Cross-reviewed both directions; PRs #19 (Codex B+D) / #20 (Claude A+C). Full detail in `SYSTEM_SPECIFICATION.md §17.18`.
+
+**Claude — Slice A:** enriched `GET /auth/me` (roles, must_change_password, office assignments, is_driver/merchant, badge counts); `GET /admin/reference`; `GET /admin/map/overview` (one grouped query for active loads); `GET`/`PATCH /admin/settings` over a curated `SettingsCatalog` (validated/ranged/audited via `PlatformSetting::set($type)`).
+
+**Claude — Slice C:** `driver_strikes.public_id` migration; `GET /admin/drivers/{id}/account`; `GET`/`POST /admin/drivers/{id}/strikes` (`DriverStrikeResource`, `active_count`, add-manual + optional ledger fee); `POST .../strikes/{strike}/void` (status-only, locked already-voided guard); `POST .../account/adjust` (`DriverAccountLedgerService::applyManualAdjustment()`, 422 on negative bucket); strikes restricted to real drivers (404); additive `DriverProfile*Resource` fields + `activity_status` filter; `User::strikes()`.
+
+**Codex — Slice B:** `GET /admin/users` directory + `{user}` detail (`UserDirectoryResource`/`UserDetailResource`, orders_count = sent+received via `withCount`); `GET /admin/orders` driver/merchant/search filters (+ `PublicIdResolver::merchantProfileId()`); `MerchantResource` owner embed (phone/account_status/roles, eager-loaded `user.roles`).
+
+**Codex — Slice D:** `OnboardingController` reusing the full office lifecycle under `role:admin` — `lookup`, `onboard` (existing-user or new person → `pre_registered`), `verify-phone` (in-office OTP), `documents` store/destroy, `submit` (→ `pending_approval`); dedicated admin FormRequests.
+
+**Cross-review fixes:** (→Claude A) `me` driver/merchant flags added, map N+1 collapsed to a grouped query, reference labels reconciled to `{value,label}`. (→Claude C) strikes guarded to real drivers (404), void already-voided check moved under a row lock. (→Codex B/D) approved — onboarding confirmed to reuse the full lifecycle, order filters validate `exists`, merchant owner embed completed.
+
+**Verified on merged `main`:** full Pest **310/310** (1036 assertions), Pint clean, `composer validate --strict` passed, 58 admin routes, `migrate:status` all ran.
