@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as Admin
 use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as AdminSettlementReverseSettlementController;
 use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
 use App\Http\Controllers\Api\Admin\Staff\OfficeAssignmentController;
+use App\Http\Controllers\Api\Admin\Staff\StaffActivityController;
 use App\Http\Controllers\Api\Admin\Staff\StaffController;
 use App\Http\Controllers\Api\Admin\UserDirectoryController;
 use App\Http\Controllers\Api\Admin\UserModerationController;
@@ -302,6 +303,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::post('/{staff}/reset-temp-password', [StaffController::class, 'resetTempPassword'])->name('reset-temp-password');
         Route::post('/{staff}/office-assignments', [OfficeAssignmentController::class, 'store'])->name('office-assignments.store');
         Route::delete('/{staff}/office-assignments/{assignment}', [OfficeAssignmentController::class, 'destroy'])->name('office-assignments.destroy');
+        Route::get('/{staff:public_id}/activity', StaffActivityController::class)->name('activity');
     });
 
 // ─── /admin — dashboard support: reference data, map, platform settings ──

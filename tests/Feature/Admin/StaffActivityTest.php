@@ -652,3 +652,139 @@ it('actor field carries public_id and name, not the integer id', function (): vo
     expect($item['actor']['public_id'])->toBe($this->admin->public_id);
     expect($item['actor']['name'])->toContain('Alice');
 });
+
+// ---------------------------------------------------------------------------
+// HTTP endpoint — GET /api/admin/staff/{staff}/activity
+// ---------------------------------------------------------------------------
+
+it('returns 200 paginated activity for an admin', function (): void {
+    // Seed one settlement so there is at least one item
+    Settlement::create([
+        'driver_id' => $this->driver->id,
+        'office_id' => $this->office->id,
+        'processed_by_staff_id' => $this->admin->id,
+        'cash_received_from_driver' => '50.00',
+        'cash_paid_to_driver' => '0.00',
+        'status' => SettlementStatus::Completed->value,
+    ]);
+
+    $this->actingAs($this->admin)
+        ->getJson("/api/admin/staff/{$this->admin->public_id}/activity")
+        ->assertOk()
+        ->assertJsonStructure([
+            'data' => [
+                '*' => ['kind', 'occurred_at', 'actor' => ['public_id']],
+            ],
+            'meta' => ['current_page', 'per_page', 'total'],
+            'links',
+        ]);
+});
+
+it('returns 403 for a non-admin user', function (): void {
+    $regular = User::factory()->create();
+    $regular->assignRole('user');
+
+    $this->actingAs($regular)
+        ->getJson("/api/admin/staff/{$this->admin->public_id}/activity")
+        ->assertForbidden();
+});
+
+it('returns 404 for an unknown staff public_id', function (): void {
+    $this->actingAs($this->admin)
+        ->getJson('/api/admin/staff/01ZZZZZZZZZZZZZZZZZZZZZZZZ/activity')
+        ->assertNotFound();
+});
+
+it('does not leak sensitive fields in the response body', function (): void {
+    // Seed assorted activity
+    Settlement::create([
+        'driver_id' => $this->driver->id,
+        'office_id' => $this->office->id,
+        'processed_by_staff_id' => $this->admin->id,
+        'cash_received_from_driver' => '20.00',
+        'cash_paid_to_driver' => '0.00',
+        'status' => SettlementStatus::Completed->value,
+    ]);
+
+    $payout = SellerPayout::create([
+        'user_id' => $this->driver->id,
+        'office_id' => $this->office->id,
+        'amount' => '15.00',
+        'status' => SellerPayoutStatus::Paid->value,
+        'paid_by_staff_id' => $this->admin->id,
+        'paid_at' => now(),
+    ]);
+
+    $target = User::factory()->create();
+    AccountModerationAction::factory()->create([
+        'actor_id' => $this->admin->id,
+        'user_id' => $target->id,
+    ]);
+
+    $strike = DriverStrike::create([
+        'driver_id' => $this->driver->id,
+        'reason' => DriverStrikeReason::ManualAdmin->value,
+        'fee_amount' => '5.00',
+        'issued_by' => DriverStrikeIssuer::Admin->value,
+        'issued_by_admin_id' => $this->admin->id,
+    ]);
+
+    $order = ($this->makeOrder)();
+    DB::table('order_status_logs')->insert([
+        'order_id' => $order->id,
+        'actor_type' => 'admin',
+        'actor_id' => $this->admin->id,
+        'from_status' => 'created',
+        'to_status' => 'assigned',
+        'created_at' => now(),
+    ]);
+
+    $response = $this->actingAs($this->admin)
+        ->getJson("/api/admin/staff/{$this->admin->public_id}/activity")
+        ->assertOk();
+
+    $body = $response->getContent();
+
+    // Must NOT contain integer id
+    expect($body)->not->toContain('"id":'.$this->admin->id);
+
+    // Must NOT contain pickup_code / delivery_code
+    expect($body)->not->toContain('pickup_code');
+    expect($body)->not->toContain('delivery_code');
+
+    // actor.public_id MUST be present
+    $data = $response->json('data');
+    expect($data)->not->toBeEmpty();
+
+    foreach ($data as $item) {
+        expect($item)->toHaveKey('actor');
+        expect($item['actor'])->toHaveKey('public_id');
+    }
+});
+
+it('filters by kinds query parameter', function (): void {
+    // Seed a settlement and a moderation action
+    Settlement::create([
+        'driver_id' => $this->driver->id,
+        'office_id' => $this->office->id,
+        'processed_by_staff_id' => $this->admin->id,
+        'cash_received_from_driver' => '10.00',
+        'cash_paid_to_driver' => '0.00',
+        'status' => SettlementStatus::Completed->value,
+    ]);
+
+    $target = User::factory()->create();
+    AccountModerationAction::factory()->create([
+        'actor_id' => $this->admin->id,
+        'user_id' => $target->id,
+    ]);
+
+    $response = $this->actingAs($this->admin)
+        ->getJson("/api/admin/staff/{$this->admin->public_id}/activity?kinds[]=settlement_processed")
+        ->assertOk();
+
+    $kinds = array_unique(array_column($response->json('data'), 'kind'));
+
+    expect($kinds)->toBe(['settlement_processed']);
+    expect($response->json('meta.total'))->toBe(1);
+});
