@@ -23,6 +23,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Laravel\Sanctum\Sanctum;
+use Spatie\Permission\Models\Role;
 use Tests\Support\TestWorld;
 
 uses(RefreshDatabase::class);
@@ -516,4 +518,68 @@ it('by_source has commission and fee_cut keys', function (): void {
     $byKey = collect($result['by_source'])->keyBy('key');
     expect($byKey['commission']['amount'])->toBe('4.00')
         ->and($byKey['fee_cut']['amount'])->toBe('2.00');
+});
+
+// ---------------------------------------------------------------------------
+// 11. HTTP endpoint — GET /api/admin/finance/report
+// ---------------------------------------------------------------------------
+
+function actingAsFinanceAdmin(): void
+{
+    Role::findOrCreate('admin', 'web');
+    $admin = User::factory()->create(['must_change_password' => false]);
+    $admin->assignRole('admin');
+    Sanctum::actingAs($admin);
+}
+
+it('admin gets 200 with expected JSON structure', function (): void {
+    actingAsFinanceAdmin();
+
+    $this->getJson('/api/admin/finance/report')
+        ->assertOk()
+        ->assertJsonStructure([
+            'range',
+            'office',
+            'accrued' => ['total', 'commission', 'fee_cut'],
+            'cash' => ['total', 'settlement_cash_net', 'payouts'],
+            'gap',
+            'by_source',
+            'by_merchant',
+            'by_office',
+            'daily_trend',
+            'recent_orders',
+        ]);
+});
+
+it('non-admin gets 403', function (): void {
+    Role::findOrCreate('admin', 'web');
+    $user = User::factory()->create(['must_change_password' => false]);
+    Sanctum::actingAs($user);
+
+    $this->getJson('/api/admin/finance/report')->assertForbidden();
+});
+
+it('bogus range value returns 422', function (): void {
+    actingAsFinanceAdmin();
+
+    $this->getJson('/api/admin/finance/report?range=bogus')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['range']);
+});
+
+it('unknown office_id returns 422 from exists rule', function (): void {
+    actingAsFinanceAdmin();
+
+    $this->getJson('/api/admin/finance/report?office_id=01JDOESNOTEXIST')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['office_id']);
+});
+
+it('valid office_id returns 200 and office.public_id echoes back', function (): void {
+    actingAsFinanceAdmin();
+
+    // $this->office is populated by the beforeEach TestWorld::create() call
+    $this->getJson('/api/admin/finance/report?office_id='.$this->office->public_id)
+        ->assertOk()
+        ->assertJsonPath('office.public_id', $this->office->public_id);
 });
