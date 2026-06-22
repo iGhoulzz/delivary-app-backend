@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\MapOverviewController;
 use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
+use App\Http\Controllers\Api\Admin\OverviewController;
 use App\Http\Controllers\Api\Admin\ReferenceController;
 use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as AdminSettlementListSellerPayoutsController;
@@ -307,6 +308,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     ->prefix('admin')
     ->name('admin.')
     ->group(function (): void {
+        Route::get('overview', OverviewController::class)->name('overview');
         Route::get('reference', ReferenceController::class)->name('reference');
         Route::get('map/overview', MapOverviewController::class)->name('map.overview');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings.index');
