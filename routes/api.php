@@ -316,7 +316,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::get('map/overview', MapOverviewController::class)->name('map.overview');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::patch('settings', [SettingsController::class, 'update'])->name('settings.update');
-        Route::get('finance/report', FinanceReportController::class)->name('admin.finance.report');
+        Route::get('finance/report', FinanceReportController::class)->name('finance.report');
     });
 
 // /admin/users - admin account moderation
