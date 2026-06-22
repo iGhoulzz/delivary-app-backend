@@ -393,6 +393,7 @@ final class StaffActivityService
         return DB::table('office_inventory')
             ->join('orders', 'orders.id', '=', 'office_inventory.order_id')
             ->where('office_inventory.received_by_staff_id', $staffId)
+            ->whereNotNull('office_inventory.received_at')
             ->whereNull('office_inventory.deleted_at')
             ->orderBy('office_inventory.received_at', 'desc')
             ->select([
