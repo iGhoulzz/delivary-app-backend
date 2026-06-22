@@ -94,6 +94,10 @@ it was checked against `PricingService` and the schema before being locked here.
   earnings pending clearance / drivers not yet settled" are all **post-delivery** states, so accrued
   must be delivered-only for `gap = accrued − cash` to mean what the label says.
 - "Revenue-bearing orders" filter = `status = 'delivered' AND driver_fee_cut_amount > 0`.
+- **Time basis = delivery time.** Because revenue is earned at delivery, every revenue query (range
+  filter, `daily_trend`, `recent_orders`) buckets on **`orders.delivered_at`**, never `created_at` —
+  an order created last week and delivered today belongs to *today*. Reporting-tz day grouping applies
+  to `delivered_at`.
 - **Pipeline / projected revenue is out of scope and must NOT be folded into `accrued`.** If a
   forward-looking number is wanted later, it ships as a *separate* `projected_revenue` metric (derived
   from in-flight orders' snapshots), never mixed into accrued. *(User decision, 2026-06-22 — option A.)*
@@ -198,11 +202,13 @@ Backs `finance.jsx`. Params: `range ∈ {today,7d,30d,all}` (default `30d`), opt
 }
 ```
 
-- `cash.settlement_cash_net` = Σ(`cash_received_from_driver` − `cash_paid_to_driver`) over settlements
-  in range (+ office); `cash.payouts` = Σ`seller_payouts.amount` in range (+ office);
-  `cash.total = settlement_cash_net − payouts`.
-- `accrued` from order snapshots over revenue-bearing orders in range (§5.1), office via §5.2 spatial
-  rule.
+- `cash.settlement_cash_net` = Σ(`cash_received_from_driver` − `cash_paid_to_driver`) over
+  **`settlements.status = 'completed'`** in range (+ office); `cash.payouts` = Σ`seller_payouts.amount`
+  over **`seller_payouts.status = 'paid'`** bucketed by **`paid_at`** (+ office);
+  `cash.total = settlement_cash_net − payouts`. Disputed/cancelled settlements and unpaid payouts are
+  excluded.
+- `accrued` from order snapshots over revenue-bearing orders **bucketed on `delivered_at`** (§5.1),
+  office via §5.2 spatial rule.
 - All amounts are decimal strings (no float JSON).
 
 ### 6.3 `GET /admin/staff/{staff}/activity`  *(NEW — Slice C)*

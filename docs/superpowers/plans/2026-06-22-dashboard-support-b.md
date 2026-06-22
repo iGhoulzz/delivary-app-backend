@@ -42,11 +42,13 @@
 - `app/Http/Requests/Admin/UpdateNotificationPreferencesRequest.php` (D)
 - `app/Http/Resources/Admin/NotificationPreferencesResource.php` (D)
 - `app/Services/User/NotificationPreferenceService.php` (D)
-- `app/Policies/UserNotificationPolicy.php` (D) *(or a method on an existing user policy — confirm during D1)*
 - `app/Http/Controllers/Api/Admin/UserNotificationPreferenceController.php` (D)
+
+> **No new User policy.** `AppServiceProvider` already maps `User::class → StaffPolicy` (`Gate::policy(User::class, StaffPolicy::class)`). A second `User` policy would override it and break staff routes. Slice D adds an `updateNotificationPreferences(User $admin, User $target)` **method to the existing `StaffPolicy`** (the mapped User policy) — no new policy class, no provider change.
 
 **Additive touches**
 - `routes/api.php` (all) — append route lines inside the existing `admin` group only.
+- `app/Policies/StaffPolicy.php` (D) — add `updateNotificationPreferences()` ability (additive method).
 
 **Test files** (one per endpoint, plus service unit tests)
 - `tests/Feature/Admin/FinanceReportTest.php` · `tests/Unit/Reporting/ReportingTimeTest.php` (A)
@@ -153,8 +155,9 @@ final class ReportingTime
 - Test: `tests/Feature/Admin/FinanceReportTest.php` (service-level cases; reuse for the endpoint in A3)
 
 **Key rules (from spec §5.1–5.2):**
+- **Time basis: revenue is recognized at delivery, so ALL revenue queries (range filter, `daily_trend`, `recent_orders`) bucket on `orders.delivered_at`, never `orders.created_at`.** An order created last week and delivered today belongs to *today's* period. (`delivered_at` is non-null for `status='delivered'` rows.) The reporting-tz day grouping (`ReportingTime::sqlLocalDate`) is applied to `delivered_at`.
 - `accrued`: only orders with `status = 'delivered'`. `commission = Σ commission_amount`, `fee_cut = Σ driver_fee_cut_amount`, `total = commission + fee_cut`. A `standard_delivery` delivered order contributes `fee_cut` (sale-only commission is 0).
-- `cash`: `settlement_cash_net = Σ(cash_received_from_driver − cash_paid_to_driver)` over settlements in range; `payouts = Σ amount` over seller_payouts in range; `total = settlement_cash_net − payouts`.
+- `cash`: only **finalized** rows. `settlement_cash_net = Σ(cash_received_from_driver − cash_paid_to_driver)` over `settlements` **where `status = 'completed'`** (excludes disputed/cancelled), bucketed by `settlements.created_at` (a settlement row is created at completion). `payouts = Σ amount` over `seller_payouts` **where `status = 'paid'`**, bucketed by **`seller_payouts.paid_at`** (when cash actually moved), not `created_at`. `total = settlement_cash_net − payouts`.
 - `gap = accrued.total − cash.total`.
 - `by_office` (revenue): spatial join pickup→region→office through **active** regions+service_areas; null region/office → `unassigned`. `by_office` cash side / `office_id` filter: settlements/payouts use stored `office_id`.
 - All money as decimal **strings**; combine with `bcmath`.
@@ -216,16 +219,16 @@ final class FinanceReportService
             'by_merchant' => $this->byMerchant($from, $to, $officeId),
             'by_office' => $this->byOffice($from, $to, $officeId),
             'daily_trend' => $this->dailyTrend($from, $to, $officeId),
-            'recent_orders' => $this->recentOrders($officeId),
+            'recent_orders' => $this->recentOrders($from, $to, $officeId),
         ];
     }
 
-    /** Delivered-only accrued revenue; office via spatial region join. */
+    /** Delivered-only accrued revenue, bucketed by delivered_at; office via spatial region join. */
     private function accrued(\Carbon\CarbonImmutable $from, \Carbon\CarbonImmutable $to, ?int $officeId): array
     {
         $row = DB::table('orders')
             ->where('orders.status', 'delivered')
-            ->whereBetween('orders.created_at', [$from, $to])
+            ->whereBetween('orders.delivered_at', [$from, $to])
             ->when($officeId, fn ($q) => $q->whereIn('orders.id', $this->orderIdsForOffice($officeId)))
             ->selectRaw('COALESCE(SUM(commission_amount),0)::text AS commission, COALESCE(SUM(driver_fee_cut_amount),0)::text AS fee_cut')
             ->first();
@@ -256,12 +259,14 @@ final class FinanceReportService
     private function cash($from, $to, ?int $officeId): array
     {
         $settle = DB::table('settlements')
+            ->where('status', 'completed')                 // exclude disputed/cancelled
             ->whereBetween('created_at', [$from, $to])
             ->when($officeId, fn ($q) => $q->where('office_id', $officeId))
             ->selectRaw('COALESCE(SUM(cash_received_from_driver - cash_paid_to_driver),0)::text AS net')
             ->value('net');
         $payouts = DB::table('seller_payouts')
-            ->whereBetween('created_at', [$from, $to])
+            ->where('status', 'paid')                       // only paid-out cash
+            ->whereBetween('paid_at', [$from, $to])         // when cash actually moved
             ->when($officeId, fn ($q) => $q->where('office_id', $officeId))
             ->selectRaw('COALESCE(SUM(amount),0)::text AS total')
             ->value('total');
@@ -275,9 +280,12 @@ final class FinanceReportService
         ];
     }
 
-    // byMerchant / byOffice / dailyTrend / recentOrders: parameterised aggregates,
-    // delivered-only, decimal-string outputs. byOffice groups on regions.office_id via the
-    // spatial join (NULL → 'unassigned'); dailyTrend groups on $this->time->sqlLocalDate('orders.created_at').
+    // byMerchant($from,$to,$officeId) / byOffice(...) / dailyTrend(...) / recentOrders($from,$to,$officeId):
+    // all delivered-only, all bucketed/filtered on orders.delivered_at, decimal-string outputs.
+    // byOffice groups on regions.office_id via the spatial join (NULL → 'unassigned');
+    // dailyTrend groups on $this->time->sqlLocalDate('orders.delivered_at');
+    // recentOrders returns the latest ~12 delivered orders in-range (order by delivered_at desc),
+    // with platform_revenue = bcadd(commission_amount, driver_fee_cut_amount).
     // ... (implemented in subsequent steps A2b–A2e, each its own failing test → impl → pass → commit)
 
     private function money(?string $v): string
@@ -289,7 +297,8 @@ final class FinanceReportService
 
 - [ ] **Step 4 — run, expect PASS** (the delivered-only/non-sale assertion).
 - [ ] **Step 5 — commit** `feat(finance): FinanceReportService accrued + cash (delivered-only)`.
-- [ ] **Steps A2b–A2e — repeat the TDD cycle** for `byMerchant`, `byOffice` (incl. an out-of-region pickup → `unassigned` test), `dailyTrend` (reporting-tz day grouping), `recentOrders` (latest ~12 delivered with `platform_revenue = commission+fee_cut`). One failing test → impl → pass → commit each.
+- [ ] **Step A2-delivery-period — failing test then confirm:** an order with `created_at` *before* the range but `delivered_at` *inside* it **counts**; one `created_at` inside but `delivered_at` after the range (or null) does **not**. Proves revenue buckets on delivery time, not creation time. (Use `range='today'` with explicit `delivered_at` timestamps.)
+- [ ] **Steps A2b–A2e — repeat the TDD cycle** for `byMerchant`, `byOffice` (incl. an out-of-region pickup → `unassigned` test), `dailyTrend` (reporting-tz day grouping on `delivered_at`), `recentOrders` (latest ~12 delivered in-range with `platform_revenue = commission+fee_cut`). One failing test → impl → pass → commit each.
 
 ### Task A3: Finance endpoint (request + resource + controller + route)
 
@@ -324,8 +333,8 @@ it('422s on a bad range', function () {
 - [ ] **Step 2 — run, expect FAIL** (route 404).
 
 - [ ] **Step 3 — implement**
-  - `FinanceReportRequest`: `range` → `nullable|in:today,7d,30d,all`; `office_id` → `nullable|string` resolved to an internal id via `App\Support\Resolvers\PublicIdResolver` (404/422 on unknown — mirror existing usage). Default range `30d`.
-  - `FinanceReportController@__invoke`: resolve `office_id` public_id → int; call `FinanceReportService::build()`; wrap in `FinanceReportResource`.
+  - `FinanceReportRequest`: `range` → `nullable|in:today,7d,30d,all`; `office_id` → `nullable|string|exists:office_locations,public_id` (an unknown office is a clean **422** from validation, per spec — not a 404). Default range `30d`.
+  - `FinanceReportController@__invoke`: after validation, resolve the validated `office_id` public_id → internal id (`OfficeLocation::where('public_id', …)->value('id')`); call `FinanceReportService::build($range, $officeId)`; wrap in `FinanceReportResource`.
   - `FinanceReportResource`: pass arrays through; `office` is `null` or `{ public_id, name }`.
   - Route (inside the admin group): `Route::get('finance/report', FinanceReportController::class)->name('admin.finance.report');`
 
@@ -450,7 +459,7 @@ it('404s on unknown staff and 403s for non-admin', function () {
 - Test: `tests/Feature/Admin/OverviewTest.php`
 
 **KPIs (spec §6.1):**
-- `delivered_today`: count of orders whose delivered transition landed in the current reporting-tz day; `delta_pct`/`direction` vs the previous local day; `sparkline` = last 7 local-day counts.
+- `delivered_today`: count of orders **bucketed on `orders.delivered_at`** (the delivery time, not `created_at`) falling in the current reporting-tz day; `delta_pct`/`direction` vs the previous local day; `sparkline` = last 7 local-day counts. Uses `ReportingTime::sqlLocalDate('orders.delivered_at')`.
 - `active_orders`: count of **non-terminal** orders (`status NOT IN` the 5 terminal states); `delta`/`sparkline` = null.
 - `online_drivers`: count `driver_profiles.activity_status <> 'offline'`; trend null.
 - `pending_settlements`: count of `driver_accounts` where `cash_to_deposit <> 0 OR earnings_balance <> 0 OR debt_balance <> 0`; trend null.
@@ -470,9 +479,18 @@ it('counts non-terminal orders as active and three-bucket pending settlements', 
     expect(collect($m['stats'])->firstWhere('id','pending_settlements')['value'])->toBe(1);
 });
 
-it('buckets delivered_today by reporting timezone', function () {
-    // order delivered at 23:30 UTC counts in the next Tripoli day
-    // ... seed + assert sparkline length 7 and delta_pct present
+it('counts delivered_today by delivery time in the reporting timezone', function () {
+    $world = Tests\Support\TestWorld::create();
+    // created yesterday, delivered "today" → must count today
+    makeDeliveredOrder($world, createdAt: now()->subDay(), deliveredAt: now());
+    // delivered at 23:30 UTC yesterday but that is 01:30 Tripoli today → still counts today
+    makeDeliveredOrder($world, deliveredAt: Carbon\CarbonImmutable::parse('today 23:30', 'UTC')->subDay());
+
+    $m = app(App\Services\Reporting\OverviewMetricsService::class)->build();
+    $card = collect($m['stats'])->firstWhere('id', 'delivered_today');
+    expect($card['value'])->toBeGreaterThanOrEqual(1);
+    expect($card['sparkline'])->toHaveCount(7);
+    expect($card)->toHaveKeys(['delta_pct', 'direction']);
 });
 ```
 - [ ] **Step 2 — run, expect FAIL → Step 3 implement** (use `ReportingTime::sqlLocalDate` for delivered counts; terminal set from `OrderStatus::isTerminal()` values). Each KPI emits `['id','value','money'=>false,'delta_pct'=>?,'direction'=>?,'sparkline'=>?]`; null trend fields for the three gauges. **→ Step 4 PASS → Step 5 commit** `feat(overview): KPI metrics service`.
@@ -510,8 +528,8 @@ it('returns overview for admin, 403 otherwise', function () {
 ### Task D1: policy + request + service + endpoint
 
 **Files:**
-- Create: `UpdateNotificationPreferencesRequest.php`, `NotificationPreferencesResource.php`, `NotificationPreferenceService.php`, `UserNotificationPolicy.php` (or a method on an existing user policy — confirm what exists), `UserNotificationPreferenceController.php`
-- Modify: `routes/api.php`
+- Create: `UpdateNotificationPreferencesRequest.php`, `NotificationPreferencesResource.php`, `NotificationPreferenceService.php`, `UserNotificationPreferenceController.php`
+- Modify: `routes/api.php`, `app/Policies/StaffPolicy.php` (add the ability — **do not** create a new User policy; `User::class` is already mapped to `StaffPolicy` in `AppServiceProvider`)
 - Test: `tests/Feature/Admin/NotificationPreferencesTest.php`
 
 - [ ] **Step 1 — failing test**
@@ -538,7 +556,7 @@ it('lets an admin patch a user notification prefs, partial + 422 on empty', func
 - [ ] **Step 3 — implement.**
   - Request: `push|sms|email` each `sometimes|boolean`; a custom rule (or `after`) requiring at least one present (empty → 422).
   - Service: `update(User $target, array $prefs, User $actor)` inside `DB::transaction`, maps `push→push_notifications_enabled` etc., saves only present keys, then `Log::info('admin.notification_prefs.updated', ['actor'=>$actor->public_id,'target'=>$target->public_id,'changed'=>array_keys($prefs)])`.
-  - Policy: `update(User $admin, User $target): bool => $admin->hasRole('admin')`; register + call via controller `authorize`.
+  - Policy: add `updateNotificationPreferences(User $admin, User $target): bool => $admin->hasRole('admin')` **to the existing `StaffPolicy`** (already mapped to `User::class`). Controller calls `$this->authorize('updateNotificationPreferences', $target)`. No new policy class, no `AppServiceProvider` change.
   - Controller: route-bind `{user:public_id}`, validate, authorize, call service, return `NotificationPreferencesResource` → `{ notification_preferences: { push, sms, email } }`.
   - Route: `Route::patch('users/{user:public_id}/notification-preferences', UserNotificationPreferenceController::class)->name('admin.users.notification-preferences.update');`
 - [ ] **Step 4 — run, expect PASS.**
