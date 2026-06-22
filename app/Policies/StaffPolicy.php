@@ -52,4 +52,9 @@ final class StaffPolicy
     {
         return $actor->hasRole('admin');
     }
+
+    public function updateNotificationPreferences(User $actor, User $target): bool
+    {
+        return $actor->hasRole('admin');
+    }
 }

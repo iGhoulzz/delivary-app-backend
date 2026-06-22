@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\Admin\Staff\OfficeAssignmentController;
 use App\Http\Controllers\Api\Admin\Staff\StaffController;
 use App\Http\Controllers\Api\Admin\UserDirectoryController;
 use App\Http\Controllers\Api\Admin\UserModerationController;
+use App\Http\Controllers\Api\Admin\UserNotificationPreferenceController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
 use App\Http\Controllers\Api\Auth\LogoutController;
@@ -327,6 +328,8 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     ->group(function (): void {
         Route::get('/', [UserDirectoryController::class, 'index'])->name('index');
         Route::get('{user}', [UserDirectoryController::class, 'show'])->name('show');
+        Route::patch('{user}/notification-preferences', UserNotificationPreferenceController::class)
+            ->name('notification-preferences.update');
     });
 
 // /admin/users - admin account moderation
