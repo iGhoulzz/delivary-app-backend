@@ -25,7 +25,7 @@ final class FinanceReportService
      *     gap: string,
      *     by_source: array<int, array{key: string, amount: string}>,
      *     by_merchant: array<int, array{merchant: array{public_id: string, name: string}, amount: string}>,
-     *     by_office: array<int, array{office_id: string|int, amount: string}>,
+     *     by_office: array<int, array{office: array{public_id: string, name: string}|string, amount: string}>,
      *     daily_trend: array<int, array{date: string, amount: string}>,
      *     recent_orders: array<int, array{order_public_id: string, type: string, merchant: array{public_id: string, name: string}|null, item_value: string|null, commission_amount: string, driver_fee_cut_amount: string, platform_revenue: string}>
      * }
@@ -175,44 +175,52 @@ final class FinanceReportService
     }
 
     /**
-     * Platform revenue grouped by the office whose region contains the pickup location.
-     * Pickup not in any active region → 'unassigned'.
+     * Platform revenue grouped by the office whose ACTIVE region (inside an ACTIVE
+     * service area) contains the pickup location — mirrors spatialOfficeSubquery() /
+     * PricingService::resolveRegion(). Orders that don't resolve, or resolve to a
+     * region with no office, fall into the 'unassigned' bucket. Office identity is
+     * exposed as { public_id, name } — never the internal id (Critical Rule 11).
      *
-     * @return array<int, array{office_id: string|int, amount: string}>
+     * @return array<int, array{office: array{public_id: string, name: string}|string, amount: string}>
      */
     private function byOffice(CarbonImmutable $from, CarbonImmutable $to, ?int $officeId): array
     {
-        // Build a subquery that resolves the office_id for each order from the
-        // spatial join (same logic as PricingService::resolveRegion).
+        // Derived table of attribution-eligible regions: active region AND active
+        // service area. The required join lives INSIDE the subquery so an active
+        // region in an inactive service area is excluded (→ pickup stays unassigned).
+        $activeRegions = 'SELECT regions.id, regions.boundary, regions.office_id
+            FROM regions
+            JOIN service_areas ON service_areas.id = regions.service_area_id
+            WHERE regions.is_active = true AND service_areas.is_active = true';
+
         $query = DB::table('orders')
             ->whereNull('orders.deleted_at')
             ->where('orders.status', OrderStatus::Delivered->value)
             ->where('orders.delivered_at', '>=', $from)
             ->where('orders.delivered_at', '<', $to)
-            ->leftJoin('regions', function ($join): void {
-                $join->whereRaw('regions.is_active = true')
-                    ->whereRaw(
-                        'ST_Contains(regions.boundary::geometry, orders.pickup_location::geometry)'
-                    );
+            ->leftJoin(DB::raw("({$activeRegions}) AS active_regions"), function ($join): void {
+                $join->whereRaw(
+                    'ST_Contains(active_regions.boundary::geometry, orders.pickup_location::geometry)'
+                );
             })
-            ->leftJoin('service_areas', function ($join): void {
-                $join->on('service_areas.id', '=', 'regions.service_area_id')
-                    ->whereRaw('service_areas.is_active = true');
-            })
-            ->groupByRaw('regions.office_id')
+            ->leftJoin('office_locations', 'office_locations.id', '=', 'active_regions.office_id')
+            ->groupBy('office_locations.id', 'office_locations.public_id', 'office_locations.name')
             ->selectRaw(
-                'regions.office_id,
+                'office_locations.public_id AS office_public_id,
+                 office_locations.name      AS office_name,
                  COALESCE(SUM(orders.commission_amount + orders.driver_fee_cut_amount), 0)::numeric(14,2)::text AS amount'
             );
 
         if ($officeId !== null) {
-            $query->where('regions.office_id', $officeId);
+            $query->where('active_regions.office_id', $officeId);
         }
 
         return $query
             ->get()
             ->map(fn (object $row): array => [
-                'office_id' => $row->office_id ?? 'unassigned',
+                'office' => $row->office_public_id !== null
+                    ? ['public_id' => $row->office_public_id, 'name' => $row->office_name]
+                    : 'unassigned',
                 'amount' => $row->amount,
             ])
             ->values()

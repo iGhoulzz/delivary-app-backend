@@ -338,12 +338,58 @@ it('by_office attributes revenue to the region office via spatial join, out-of-r
     ]);
 
     $result = $this->service->build('all', null);
-    $byOffice = collect($result['by_office'])->keyBy('office_id');
+    $byOffice = collect($result['by_office']);
 
-    expect($byOffice->has((string) $this->office->id))->toBeTrue()
-        ->and($byOffice[(string) $this->office->id]['amount'])->toBe('8.00')
-        ->and($byOffice->has('unassigned'))->toBeTrue()
-        ->and($byOffice['unassigned']['amount'])->toBe('4.00');
+    $assigned = $byOffice->firstWhere('office.public_id', $this->office->public_id);
+    $unassigned = $byOffice->first(fn (array $r): bool => $r['office'] === 'unassigned');
+
+    expect($assigned)->not->toBeNull()
+        ->and($assigned['amount'])->toBe('8.00')
+        ->and($unassigned)->not->toBeNull()
+        ->and($unassigned['amount'])->toBe('4.00');
+});
+
+it('by_office exposes public office identity and never the internal id', function (): void {
+    makeDeliveredOrder([
+        'pickup_location' => Point::makeGeodetic($this->pickup['lat'], $this->pickup['lng']),
+        'commission_amount' => '6.00',
+        'driver_fee_cut_amount' => '2.00',
+    ]);
+
+    $result = $this->service->build('all', null);
+    $row = collect($result['by_office'])->firstWhere('office.public_id', $this->office->public_id);
+
+    expect($row)->not->toBeNull()
+        ->and($row['office'])->toHaveKeys(['public_id', 'name'])
+        ->and($row['office'])->not->toHaveKey('id')
+        ->and($row['office']['public_id'])->toBe($this->office->public_id);
+
+    // The integer office id must not leak anywhere in the by_office payload.
+    expect(json_encode($result['by_office']))
+        ->not->toContain('"office_id"')
+        ->not->toContain('"id":'.$this->office->id);
+});
+
+it('does not attribute a pickup whose service area is inactive (→ unassigned)', function (): void {
+    // Pickup is inside the active region...
+    makeDeliveredOrder([
+        'pickup_location' => Point::makeGeodetic($this->pickup['lat'], $this->pickup['lng']),
+        'commission_amount' => '6.00',
+        'driver_fee_cut_amount' => '2.00',
+    ]);
+
+    // ...but its service area is deactivated → must NOT be attributed to the office.
+    DB::table('service_areas')
+        ->where('id', $this->region->service_area_id)
+        ->update(['is_active' => false]);
+
+    $byOffice = collect($this->service->build('all', null)['by_office']);
+
+    expect($byOffice->firstWhere('office.public_id', $this->office->public_id))->toBeNull();
+
+    $unassigned = $byOffice->first(fn (array $r): bool => $r['office'] === 'unassigned');
+    expect($unassigned)->not->toBeNull()
+        ->and($unassigned['amount'])->toBe('8.00');
 });
 
 // ---------------------------------------------------------------------------
