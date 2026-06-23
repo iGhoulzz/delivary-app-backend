@@ -1,7 +1,7 @@
 # Dashboard Support B (Admin-only) — Overview, Finance, Staff Activity, Notification-Pref Editing
 
 **Date:** 2026-06-22
-**Status:** 📝 DRAFT — design under review. (Successor to Dashboard Support A, §17.18.)
+**Status:** ✅ IMPLEMENTED — merged in PR #22. (Successor to Dashboard Support A, §17.18; closed out in §17.19.)
 **Cut:** Admin-only (office-staff dashboard remains a later cut).
 **Design source:** `docs/design/dashboard/` — the built bilingual "Tawseel Ops Console"
 (`overview.jsx`, `finance.jsx`, `staffDetail.jsx`, `userDetail.jsx`).
@@ -31,8 +31,8 @@ it was checked against `PricingService` and the schema before being locked here.
 
 - **Additive only. No refactor.** Every item is a *new* file (controller / route / resource /
   read-service) or an *additive touch* (a new response field). **No existing endpoint changes
-  behaviour, signature, status code, or logic. No new tables. No migrations.** (The reporting
-  timezone is a new **config file**, not a column.)
+  behaviour, signature, status code, or logic. No new tables.** The only migration is the intentionally
+  pulled-in order snapshot hardening (`pickup_region_id`, `pickup_office_id`) described in §3/§5.2.
 - **Revenue is derived, never written, never recalculated onto records.** All financial figures are
   read-time aggregates of **existing snapshots** (`orders.commission_amount`,
   `orders.driver_fee_cut_amount`, settlement/payout cash columns). No financial write of any kind in
@@ -70,7 +70,7 @@ it was checked against `PricingService` and the schema before being locked here.
 | Fact | Source | Consequence |
 |---|---|---|
 | `driver_fee_cut_amount = base × rate` is computed for **every** order type; `commission_amount` is **sale-only** (`p2p_sale`/`merchant_delivery`). | `PricingService::compute()` (no `$isSale` guard on the cut; `commissionRate='0'` otherwise) | "Revenue-bearing" = `driver_fee_cut_amount > 0`, **not** sale-only. |
-| `orders` has **no** `region_id` / `service_area_id` / origin `office_id` (only `return_office_id`). Region is resolved spatially at pricing time and **not persisted**. | `create_orders_table` + `Order::$fillable` | Revenue-by-office needs a PostGIS spatial join, not an FK join. |
+| `orders` now snapshots `pickup_region_id` / `pickup_office_id`; older rows are backfilled once. | `add_pickup_region_office_to_orders_table` + `CreationService` | Revenue-by-office reads the order-time snapshot, not a live PostGIS re-resolution. |
 | `regions.office_id` exists (nullable FK). | `add_office_id_to_regions_table` | Region → office is a real link. |
 | `settlements.office_id`, `seller_payouts.office_id` are stored. | settlement/payout migrations | Cash-by-office uses the stored column. |
 | Driver buckets: `cash_to_deposit`, `earnings_balance`, `debt_balance`. | `create_driver_accounts_table` | "Pending settlement" = any non-zero of the three. |
@@ -341,7 +341,7 @@ event sources) + C2 (latest-pointer attribution sources) sharing one resource; d
   in any activity payload; actor is a public_id.
 - **Non-refactor proof:** the existing suite stays green with **zero changes to existing test
   expectations**; Pint clean; `composer validate --strict`; `route:list` shows the new routes;
-  `migrate:status` unchanged (no migrations).
+  `migrate:status` includes the order snapshot migration.
 
 ## 11. Open questions
 
