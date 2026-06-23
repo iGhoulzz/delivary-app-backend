@@ -53,10 +53,22 @@ it was checked against `PricingService` and the schema before being locked here.
 
 - **Admin-created orders** ("New order" button) — deferred at user direction.
 - **Office-staff dashboard / office-context cut** — later milestone.
-- **A persisted `orders.pickup_region_id` (or origin `office_id`)** — would be the real optimisation
-  for revenue-by-office, but it needs a migration and only back-fills new orders, so it is **not**
-  part of this additive milestone. Office attribution is done by spatial resolution at report time
-  (§5.2). A persisted column is a separate, explicit future decision.
+- **A persisted `orders.pickup_region_id` + `orders.pickup_office_id` (production-hardening follow-up).**
+  Office attribution is currently done by spatial resolution at *report* time (§5.2). This has a known
+  edge case flagged in Codex review: `byOffice()` runs `ST_Contains` with no `LIMIT 1`, so if two
+  **overlapping** active regions both contain a pickup, that delivered order is counted under **both**
+  offices — inflating `by_office` past `accrued.total`. `PricingService::resolveRegion()` avoids this
+  because it uses `LIMIT 1` (the order is priced once). The risk is therefore confined to finance
+  *reporting* attribution — never customer charge, settlement, payout, or order creation. **Non-blocking
+  for this milestone** (active regions are operationally non-overlapping today). The proper fix —
+  matching the existing snapshot philosophy (commission/fees are snapshotted at creation, Critical
+  Rule 1) — is to **snapshot the resolved pickup region + office on the order at pricing time**:
+  add nullable `orders.pickup_region_id` + `orders.pickup_office_id`, persist them when
+  `PricingService` resolves the region, switch finance `by_office` + the `office_id` filter to read
+  the snapshot instead of re-running `ST_Contains`, and backfill older orders (resolve pickup once, or
+  leave `unassigned`). Benefits: no double-count from overlapping regions, and historical finance
+  reports stay stable even if region boundaries change later. Needs a migration → a separate, explicit
+  future decision, not part of this additive milestone.
 - **A DB audit trail for notification-pref edits** — there is no generic admin-action audit table and
   the `*_notifications_enabled` columns carry no `updated_by_admin_id`; adding one breaks the additive
   guardrail. The write is transactional + `Log::info` only this milestone (§6.4).
