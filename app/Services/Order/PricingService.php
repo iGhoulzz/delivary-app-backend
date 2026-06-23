@@ -21,6 +21,7 @@ final class PricingService
      * @return array{
      *   region_id: int,
      *   region_name: string,
+     *   office_id: int|null,
      *   distance_km: string,
      *   delivery_fee_base: string,
      *   delivery_fee: string,
@@ -92,6 +93,7 @@ final class PricingService
         return [
             'region_id' => $region->id,
             'region_name' => $region->name,
+            'office_id' => $region->office_id !== null ? (int) $region->office_id : null,
             'distance_km' => $distanceKm,
             'delivery_fee_base' => $base,
             'delivery_fee' => $fee,
@@ -108,7 +110,7 @@ final class PricingService
     private function resolveRegion(float $lng, float $lat): Region
     {
         $row = DB::selectOne(
-            'SELECT regions.id, regions.name, regions.base_fee::text AS base_fee
+            'SELECT regions.id, regions.name, regions.office_id, regions.base_fee::text AS base_fee
                FROM regions
                JOIN service_areas ON service_areas.id = regions.service_area_id
               WHERE regions.is_active = true
@@ -128,6 +130,7 @@ final class PricingService
         $region = new Region;
         $region->id = (int) $row->id;
         $region->name = (string) $row->name;
+        $region->office_id = $row->office_id !== null ? (int) $row->office_id : null;
         $region->base_fee = (string) $row->base_fee;
 
         return $region;

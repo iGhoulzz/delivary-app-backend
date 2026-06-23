@@ -16,7 +16,6 @@ use App\Models\User;
 use App\Services\Reporting\FinanceReportService;
 use Carbon\CarbonImmutable;
 use Clickbar\Magellan\Data\Geometries\Point;
-use Clickbar\Magellan\Data\Geometries\Polygon;
 use Database\Seeders\PlatformSettingsSeeder;
 use Database\Seeders\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -319,26 +318,26 @@ it('gap = accrued.total − cash.total', function (): void {
 });
 
 // ---------------------------------------------------------------------------
-// 5. by_office: spatial attribution
+// 5. by_office: snapshot attribution (orders.pickup_office_id)
 // ---------------------------------------------------------------------------
 
-it('by_office attributes revenue to the region office via spatial join, out-of-region → unassigned', function (): void {
-    // In-region order (inside TestWorld polygon, commission=6, fee_cut=2 → 8.00 total)
+it('by_office attributes revenue to the snapshot office, no snapshot → unassigned', function (): void {
+    // Snapshotted to $this->office at creation (commission=6, fee_cut=2 → 8.00 total)
     makeDeliveredOrder([
-        'pickup_location' => Point::makeGeodetic($this->pickup['lat'], $this->pickup['lng']),
+        'pickup_region_id' => $this->region->id,
+        'pickup_office_id' => $this->office->id,
         'commission_amount' => '6.00',
         'driver_fee_cut_amount' => '2.00',
     ]);
 
-    // Out-of-region order (outside any known region)
+    // No resolved office (pickup_office_id null) → unassigned
     makeDeliveredOrder([
-        'pickup_location' => Point::makeGeodetic(31.00, 15.00),
+        'pickup_office_id' => null,
         'commission_amount' => '3.00',
         'driver_fee_cut_amount' => '1.00',
     ]);
 
-    $result = $this->service->build('all', null);
-    $byOffice = collect($result['by_office']);
+    $byOffice = collect($this->service->build('all', null)['by_office']);
 
     $assigned = $byOffice->firstWhere('office.public_id', $this->office->public_id);
     $unassigned = $byOffice->first(fn (array $r): bool => $r['office'] === 'unassigned');
@@ -351,7 +350,7 @@ it('by_office attributes revenue to the region office via spatial join, out-of-r
 
 it('by_office exposes public office identity and never the internal id', function (): void {
     makeDeliveredOrder([
-        'pickup_location' => Point::makeGeodetic($this->pickup['lat'], $this->pickup['lng']),
+        'pickup_office_id' => $this->office->id,
         'commission_amount' => '6.00',
         'driver_fee_cut_amount' => '2.00',
     ]);
@@ -370,43 +369,52 @@ it('by_office exposes public office identity and never the internal id', functio
         ->not->toContain('"id":'.$this->office->id);
 });
 
-it('does not attribute a pickup whose service area is inactive (→ unassigned)', function (): void {
-    // Pickup is inside the active region...
+it('by_office reads the order snapshot and is stable if the region later changes', function (): void {
     makeDeliveredOrder([
-        'pickup_location' => Point::makeGeodetic($this->pickup['lat'], $this->pickup['lng']),
+        'pickup_region_id' => $this->region->id,
+        'pickup_office_id' => $this->office->id,
         'commission_amount' => '6.00',
         'driver_fee_cut_amount' => '2.00',
     ]);
 
-    // ...but its service area is deactivated → must NOT be attributed to the office.
-    DB::table('service_areas')
-        ->where('id', $this->region->service_area_id)
-        ->update(['is_active' => false]);
+    // The region is later deactivated / re-drawn — attribution must NOT change,
+    // because finance reads the order-time snapshot, not today's map.
+    DB::table('regions')->where('id', $this->region->id)->update(['is_active' => false]);
+
+    $row = collect($this->service->build('all', null)['by_office'])
+        ->firstWhere('office.public_id', $this->office->public_id);
+
+    expect($row)->not->toBeNull()->and($row['amount'])->toBe('8.00');
+});
+
+it('counts a delivered order once under its snapshot office (no double-count)', function (): void {
+    makeDeliveredOrder([
+        'pickup_office_id' => $this->office->id,
+        'commission_amount' => '6.00',
+        'driver_fee_cut_amount' => '2.00',
+    ]);
 
     $byOffice = collect($this->service->build('all', null)['by_office']);
 
-    expect($byOffice->firstWhere('office.public_id', $this->office->public_id))->toBeNull();
-
-    $unassigned = $byOffice->first(fn (array $r): bool => $r['office'] === 'unassigned');
-    expect($unassigned)->not->toBeNull()
-        ->and($unassigned['amount'])->toBe('8.00');
+    expect($byOffice->where('office.public_id', $this->office->public_id))->toHaveCount(1)
+        ->and($byOffice->firstWhere('office.public_id', $this->office->public_id)['amount'])->toBe('8.00');
 });
 
 // ---------------------------------------------------------------------------
 // 6. office_id filter scopes revenue queries
 // ---------------------------------------------------------------------------
 
-it('office_id filter restricts accrued to pickup in that office region', function (): void {
-    // In-region (will be attributed to $this->office)
+it('office_id filter restricts accrued to the snapshot office', function (): void {
+    // Snapshotted to $this->office
     makeDeliveredOrder([
-        'pickup_location' => Point::makeGeodetic($this->pickup['lat'], $this->pickup['lng']),
+        'pickup_office_id' => $this->office->id,
         'commission_amount' => '5.00',
         'driver_fee_cut_amount' => '1.00',
     ]);
 
-    // Out-of-region — should not appear when filtering by $this->office->id
+    // No office snapshot — must not appear when filtering by $this->office->id
     makeDeliveredOrder([
-        'pickup_location' => Point::makeGeodetic(31.00, 15.00),
+        'pickup_office_id' => null,
         'commission_amount' => '99.00',
         'driver_fee_cut_amount' => '99.00',
     ]);

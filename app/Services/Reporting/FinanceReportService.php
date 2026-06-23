@@ -71,7 +71,7 @@ final class FinanceReportService
             );
 
         if ($officeId !== null) {
-            $query->whereRaw($this->spatialOfficeSubquery(), [$officeId]);
+            $query->where('orders.pickup_office_id', $officeId);
         }
 
         $row = $query->first();
@@ -158,7 +158,7 @@ final class FinanceReportService
             );
 
         if ($officeId !== null) {
-            $query->whereRaw($this->spatialOfficeSubquery(), [$officeId]);
+            $query->where('orders.pickup_office_id', $officeId);
         }
 
         return $query
@@ -175,35 +175,24 @@ final class FinanceReportService
     }
 
     /**
-     * Platform revenue grouped by the office whose ACTIVE region (inside an ACTIVE
-     * service area) contains the pickup location — mirrors spatialOfficeSubquery() /
-     * PricingService::resolveRegion(). Orders that don't resolve, or resolve to a
-     * region with no office, fall into the 'unassigned' bucket. Office identity is
-     * exposed as { public_id, name } — never the internal id (Critical Rule 11).
+     * Platform revenue grouped by the office snapshotted on each order at creation
+     * (orders.pickup_office_id). Reading the snapshot — rather than re-resolving the
+     * pickup against current map polygons — means each order is counted under exactly
+     * one office (no double-count from overlapping regions) and historical reports
+     * stay stable if region boundaries change later. Orders with no snapshot office
+     * fall into 'unassigned'. Office identity is { public_id, name } — never the
+     * internal id (Critical Rule 11).
      *
      * @return array<int, array{office: array{public_id: string, name: string}|string, amount: string}>
      */
     private function byOffice(CarbonImmutable $from, CarbonImmutable $to, ?int $officeId): array
     {
-        // Derived table of attribution-eligible regions: active region AND active
-        // service area. The required join lives INSIDE the subquery so an active
-        // region in an inactive service area is excluded (→ pickup stays unassigned).
-        $activeRegions = 'SELECT regions.id, regions.boundary, regions.office_id
-            FROM regions
-            JOIN service_areas ON service_areas.id = regions.service_area_id
-            WHERE regions.is_active = true AND service_areas.is_active = true';
-
         $query = DB::table('orders')
             ->whereNull('orders.deleted_at')
             ->where('orders.status', OrderStatus::Delivered->value)
             ->where('orders.delivered_at', '>=', $from)
             ->where('orders.delivered_at', '<', $to)
-            ->leftJoin(DB::raw("({$activeRegions}) AS active_regions"), function ($join): void {
-                $join->whereRaw(
-                    'ST_Contains(active_regions.boundary::geometry, orders.pickup_location::geometry)'
-                );
-            })
-            ->leftJoin('office_locations', 'office_locations.id', '=', 'active_regions.office_id')
+            ->leftJoin('office_locations', 'office_locations.id', '=', 'orders.pickup_office_id')
             ->groupBy('office_locations.id', 'office_locations.public_id', 'office_locations.name')
             ->selectRaw(
                 'office_locations.public_id AS office_public_id,
@@ -212,7 +201,7 @@ final class FinanceReportService
             );
 
         if ($officeId !== null) {
-            $query->where('active_regions.office_id', $officeId);
+            $query->where('orders.pickup_office_id', $officeId);
         }
 
         return $query
@@ -249,7 +238,7 @@ final class FinanceReportService
             );
 
         if ($officeId !== null) {
-            $query->whereRaw($this->spatialOfficeSubquery(), [$officeId]);
+            $query->where('orders.pickup_office_id', $officeId);
         }
 
         return $query
@@ -290,7 +279,7 @@ final class FinanceReportService
             );
 
         if ($officeId !== null) {
-            $query->whereRaw($this->spatialOfficeSubquery(), [$officeId]);
+            $query->where('orders.pickup_office_id', $officeId);
         }
 
         return $query
@@ -308,27 +297,5 @@ final class FinanceReportService
             ])
             ->values()
             ->all();
-    }
-
-    // -------------------------------------------------------------------------
-    // SQL helpers
-    // -------------------------------------------------------------------------
-
-    /**
-     * Returns a parameterised SQL fragment (one `?` placeholder = office_id)
-     * that is true when an order's pickup_location falls inside an active region
-     * owned by the given office — mirrors PricingService::resolveRegion().
-     */
-    private function spatialOfficeSubquery(): string
-    {
-        return 'EXISTS (
-            SELECT 1
-            FROM regions
-            JOIN service_areas ON service_areas.id = regions.service_area_id
-            WHERE regions.is_active = true
-              AND service_areas.is_active = true
-              AND regions.office_id = ?
-              AND ST_Contains(regions.boundary::geometry, orders.pickup_location::geometry)
-        )';
     }
 }
