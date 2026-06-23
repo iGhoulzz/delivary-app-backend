@@ -299,8 +299,8 @@ Driver::join('driver_profiles', ...)
 
 ## Current Project State
 
-**Last updated:** 2026-06-18
-**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10). Test infrastructure ✅ (milestone 2026-06-04). Merchant deliveries ✅ (sub-project E, 2026-06-12, PRs #14/#15). Dashboard Support A ✅ (admin-only backend for the internal dashboard, 2026-06-18, PRs #19/#20 — §17.18).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons; all e2e smokes run as Pest tests in CI; merchants onboarded by admins create shop→customer orders that settle through the existing payout pipeline; the admin API surface the internal dashboard binds to is complete (310 Pest tests). **Next: build the internal dashboard frontend** (Vue 3 + TS, separate repo) against these stable contracts; deferred Overview aggregates ("Dashboard Support B") follow as needed.
+**Last updated:** 2026-06-23
+**Status:** Schema phase (1–9) ✅ done. **Auth ✅. Driver onboarding ✅. Order lifecycle A+B ✅. Sub-project C pre-pickup tail ✅ (Slice 10). Sub-project D failed delivery + return-to-office ✅ (Slice 11). Settlement & seller payouts ✅ (milestone 2026-05-17). Staff CRUD ✅ (milestone 2026-05-20, Slices A+B). Internal-ID exposure remediation ✅ (PR #5, merged 2026-06-02). Real-time / Reverb ✅ (milestone 2026-06-02). Account moderation ✅ (milestone 2026-06-03, PRs #9/#10). Test infrastructure ✅ (milestone 2026-06-04). Merchant deliveries ✅ (sub-project E, 2026-06-12, PRs #14/#15). Dashboard Support A ✅ (admin-only backend foundations, 2026-06-18, PRs #19/#20 — §17.18). Dashboard Support B ✅ (Overview, finance report, staff activity, notification-pref editing, 2026-06-23, PR #22 — §17.19).** Cash loop closed end-to-end; admin staff account management live; real-time push live across order/driver/user channels; admin can suspend/ban/reinstate any account with audited reasons; all e2e smokes run as Pest tests in CI; merchants onboarded by admins create shop→customer orders that settle through the existing payout pipeline; the admin API surface the internal dashboard binds to is complete enough for the Vue frontend (370 Pest tests). **Next: build the internal dashboard frontend** (Vue 3 + TS, separate repo) against the Dashboard Support A+B contracts. Admin-created orders remain deferred by product decision.
 
 | Group | Tables | Status |
 |---|---|---|
@@ -543,9 +543,9 @@ Shipped the `merchant_delivery` order type end to end (shop → customer). Full 
 - **Verified merged main:** Pest **261/261**, Pint clean, new `MerchantDeliveryTest` full-lifecycle smoke green, security review no HIGH/MEDIUM. Housekeeping: `composer.json` PHP floor → `^8.4`.
 
 ### Next Steps (in order)
-1. **Internal dashboard frontend** — Vue 3 + TS + Vite (separate repo), built against the now-stable admin API (Dashboard Support A). Its own brainstorm → spec first.
-2. **Dashboard Support B** (as the frontend needs it) — Overview KPI-summary cards, recent-activity feed, finance/revenue reporting; notification-preference editing; admin-created orders.
-3. **Convert `realtime-smoke.php` to Pest** (`RealtimeSmokeTest`) — deferred from the test-infrastructure milestone.
+1. **Internal dashboard frontend** — Vue 3 + TS + Vite (separate repo), built against the now-stable admin API (Dashboard Support A+B). Its own brainstorm → spec first.
+2. **Convert `realtime-smoke.php` to Pest** (`RealtimeSmokeTest`) — deferred from the test-infrastructure milestone.
+3. **Admin-created orders** — still deferred by product decision; revisit only if operations needs back-office order entry.
 
 *Deferred indefinitely:* cash-delivery-to-seller's-address (settlement v2) — no demand; office-pickup works; `seller_payouts.payout_method` supports adding it later without a migration.
 

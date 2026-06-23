@@ -1080,3 +1080,21 @@ Verification:
 Boundary:
 
 - Claude-owned finance report and staff-activity timeline slices are not marked complete here. This entry covers only Codex-owned Overview and notification-preference editing.
+
+---
+
+## 2026-06-23 Dashboard Support B closeout cleanup
+
+Post-merge cleanup after PR #22 landed on `main`.
+
+Scope:
+
+- Removed tracked `.claude/settings.local.json` from Git and added it to `.gitignore`; this file is local Claude permission state, not project source.
+- Updated `docs/CLAUDE.md` to mark Dashboard Support B complete and make the internal dashboard frontend the next backend-consuming milestone.
+- Added `SYSTEM_SPECIFICATION.md §17.19` summarising Dashboard Support B endpoints, finance semantics, order-time office snapshots, overview metrics, staff activity, notification preference editing, and verification.
+- Reconciled the Support B spec/plan with the implemented order snapshot migration (`pickup_region_id`, `pickup_office_id`), replacing stale "draft/no migrations" language.
+
+Verification:
+
+- Docs-only + Git tracking cleanup; no backend code changed.
+- `git diff --check`: passed.

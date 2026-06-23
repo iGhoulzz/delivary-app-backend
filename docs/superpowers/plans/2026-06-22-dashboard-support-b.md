@@ -4,7 +4,7 @@
 
 **Goal:** Add the four still-unbacked admin dashboard backends — Overview, Finance report, Staff-activity audit timeline, and notification-preference editing — strictly additively.
 
-**Architecture:** New read-only aggregate services + JsonResources + admin controllers; one transactional PATCH. No new tables, no migrations (reporting timezone is a new config file). Revenue/cash are derived from existing snapshots, never written or recalculated. Spec: `docs/superpowers/specs/2026-06-22-dashboard-support-b-design.md`. Process: `docs/WORKFLOW.md`.
+**Architecture:** New read-only aggregate services + JsonResources + admin controllers; one transactional PATCH. No new tables; one additive order snapshot migration was pulled in during review for production-safe office attribution (`pickup_region_id`, `pickup_office_id`). Revenue/cash are derived from snapshots, never written or recalculated. Spec: `docs/superpowers/specs/2026-06-22-dashboard-support-b-design.md`. Process: `docs/WORKFLOW.md`.
 
 **Tech Stack:** Laravel (PHP 8.4), Sanctum, Spatie Permission, PostGIS (clickbar/magellan), Pest. All endpoints `auth:sanctum` + `role:admin` + `staff.password_change_required`.
 
@@ -571,7 +571,7 @@ Run from the owner's worktree with its isolated DB (`docs/WORKFLOW.md §7`):
 - [ ] `vendor/bin/pint` — clean.
 - [ ] `DB_DATABASE=<worktree_db> vendor/bin/pest` — full suite green, **zero changes to existing test expectations** (the additive/non-refactor proof).
 - [ ] `php artisan route:list --path=api` — the new routes present.
-- [ ] `php artisan migrate:status` — unchanged (this milestone adds **no** migrations).
+- [ ] `php artisan migrate:status` — all migrations ran, including the additive order snapshot migration.
 - [ ] Cross-review the other agent's slices (`superpowers:requesting-code-review`); reviewer notes addressed before merge.
 - [ ] Merge order: **A → C** (Claude), then Codex rebases and merges **B → D**.
 - [ ] Closeout (`docs/WORKFLOW.md §8`): CODEX.md log entries, CLAUDE.md "Current Project State" + endpoint table, SYSTEM_SPECIFICATION §17.19, memory handoff.
@@ -579,4 +579,4 @@ Run from the owner's worktree with its isolated DB (`docs/WORKFLOW.md §7`):
 ## Self-review notes (spec coverage)
 
 - Overview KPIs + activity feed → Slice B ✅; Finance report (accrued delivered-only, cash, gap, breakdowns, trend, recent) → Slice A ✅; Staff-activity (15 sources, actor_type fix, append-only vs latest-pointer, safety) → Slice C ✅; notification-pref editing → Slice D ✅.
-- Timezone (Africa/Tripoli via config) → A1 ✅. Office attribution active regions+areas → A2 ✅. Three-bucket pending settlements + non-terminal active_orders → B1 ✅. No migrations / additive → file map ✅.
+- Timezone (Africa/Tripoli via config) → A1 ✅. Office attribution snapshot (`pickup_office_id`) → A2 + hardening commit ✅. Three-bucket pending settlements + non-terminal active_orders → B1 ✅. Additive/no-refactor proof → file map ✅.

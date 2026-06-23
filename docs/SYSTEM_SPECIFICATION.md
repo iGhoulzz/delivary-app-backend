@@ -1339,9 +1339,36 @@ Backend-first milestone that stabilised the admin API contract for the internal 
 
 **Schema delta:** one additive migration — `driver_strikes.public_id` (ULID, for the void URL per Rule 11). Additive service/model changes: `DriverAccountLedgerService::applyManualAdjustment()` + `mutateBucket($reference)` widened nullable (backward-compatible); `PlatformSetting::set()` gained optional `$type`; `PublicIdResolver::merchantProfileId()`; `User::strikes()`; additive fields on `DriverProfileResource`/`DriverProfileFullResource` + `activity_status` list filter; richer `MerchantResource` owner embed; enriched `MeController`.
 
-**Deferred to "Dashboard Support B":** Overview KPI-summary cards + recent-activity feed; finance/revenue reporting; notification-preference *editing* (prefs are exposed read-only); admin-created orders.
+**Closed by Dashboard Support B (§17.19):** Overview KPI-summary cards + recent-activity feed; finance/revenue reporting; notification-preference editing. **Still deferred:** admin-created orders.
 
 **Verified on merged `main`:** full Pest suite **310/310** (1036 assertions) green, Pint clean, `composer validate --strict` passed, 58 admin routes, `migrate:status` all ran.
+
+### 17.19 Dashboard Support B milestone (admin-only) (2026-06-23) ✅
+
+Second backend-support pass for the internal dashboard. Dashboard Support A covered rosters, detail screens, settings, map references, users/orders/merchants, driver finance, and admin onboarding. Dashboard Support B added the remaining admin dashboard read/write contracts that were still backed by design mock data: Overview KPI/activity, Finance report, Staff activity timeline, and notification-preference editing. Built per `docs/superpowers/specs/2026-06-22-dashboard-support-b-design.md` and `docs/superpowers/plans/2026-06-22-dashboard-support-b.md`; merged as PR #22.
+
+**Endpoints shipped** (all `sanctum` + `role:admin` + `staff.password_change_required`):
+
+| Endpoint | Method | Slice |
+|---|---|---|
+| `/api/admin/overview` - KPI cards + recent order activity | GET | B |
+| `/api/admin/finance/report?range=&office_id=` - delivered-revenue report | GET | A |
+| `/api/admin/staff/{staff}/activity` - unified staff/admin actor timeline | GET | C |
+| `/api/admin/users/{user}/notification-preferences` - edit push/sms/email flags | PATCH | D |
+
+**Locked finance semantics:** revenue is recognised on delivered orders only. Platform revenue = `orders.commission_amount` (sale-only: P2P sale / merchant delivery) + `orders.driver_fee_cut_amount` (all priced deliveries). Finance is a derived reporting surface, not a ledger write. Cash-realised figures use settlements and seller payouts. The reconciliation gap is derived from accrued delivered revenue minus cash-realised movement.
+
+**Office attribution:** orders now snapshot `pickup_region_id` and `pickup_office_id` at creation time from the same pricing region resolution that prices the order. Finance reports use `orders.pickup_office_id` instead of re-running `ST_Contains` against current polygons. This prevents double-counting if active regions overlap and keeps historical reports stable when boundaries change. Existing rows are backfilled once by the migration; unresolved pickups remain `unassigned`.
+
+**Overview semantics:** `delivered_today` uses `orders.delivered_at` bucketed in `config/reporting.php` timezone (`REPORTING_TIMEZONE`, default `Africa/Tripoli`). `active_orders` = non-terminal order statuses through the existing `Order::active()` scope. `online_drivers` = driver profiles whose `activity_status` is not `offline`. `pending_settlements` = driver accounts where any cash/earnings/debt bucket is non-zero. Only true delivered-count history gets delta/sparkline; current-state gauges intentionally return no fabricated trend.
+
+**Staff activity:** read-time merged timeline across canonical actor sources: order status logs, settlements, seller payouts, account moderation, manual driver-account adjustments, strike issue/void, office return receive/retrieve, and latest-pointer attribution fields for approval/verification/onboarding/settings/abandonment where no append-only audit source exists. Activity items expose safe references and raw enum/status values; frontend dictionaries own EN/AR phrasing.
+
+**Notification preferences:** admin-only transactional patch of `users.push_notifications_enabled`, `sms_notifications_enabled`, and `email_notifications_enabled`. Empty patches reject with 422; partial updates are allowed. This milestone records a `Log::info('admin.notification_prefs.updated', ...)` soft trail only; no DB audit table was added.
+
+**Schema/config delta:** one nullable order snapshot migration (`pickup_region_id`, `pickup_office_id`, plus backfill) and one reporting config file (`config/reporting.php`). Local Claude permission state is not project source and is ignored via `.gitignore`.
+
+**Verified on merged `main`:** full Pest suite **370/370** (1278 assertions) green, targeted finance/order/merchant tests green, Pint clean, `route:list` confirms all four admin endpoints.
 
 **End of Specification Document**
 
