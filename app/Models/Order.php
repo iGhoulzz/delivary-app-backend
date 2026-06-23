@@ -40,7 +40,7 @@ final class Order extends Model
         // sender
         'sender_user_id', 'sender_phone', 'sender_name',
         // pickup
-        'pickup_address', 'pickup_location', 'pickup_notes',
+        'pickup_address', 'pickup_location', 'pickup_region_id', 'pickup_office_id', 'pickup_notes',
         'pickup_code', 'pickup_code_attempts', 'picked_up_method',
         'pickup_geofence_confirmed_at',
         // receiver

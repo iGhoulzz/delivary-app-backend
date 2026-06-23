@@ -7,9 +7,11 @@ use App\Http\Controllers\Api\Admin\Driver\AccountController as AdminDriverAccoun
 use App\Http\Controllers\Api\Admin\Driver\OnboardingController as AdminDriverOnboardingController;
 use App\Http\Controllers\Api\Admin\Driver\StrikeController as AdminDriverStrikeController;
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
+use App\Http\Controllers\Api\Admin\FinanceReportController;
 use App\Http\Controllers\Api\Admin\MapOverviewController;
 use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
+use App\Http\Controllers\Api\Admin\OverviewController;
 use App\Http\Controllers\Api\Admin\ReferenceController;
 use App\Http\Controllers\Api\Admin\SettingsController;
 use App\Http\Controllers\Api\Admin\Settlement\ListSellerPayoutsController as AdminSettlementListSellerPayoutsController;
@@ -17,9 +19,11 @@ use App\Http\Controllers\Api\Admin\Settlement\ListSettlementsController as Admin
 use App\Http\Controllers\Api\Admin\Settlement\ReverseSettlementController as AdminSettlementReverseSettlementController;
 use App\Http\Controllers\Api\Admin\Settlement\ShowSettlementController as AdminSettlementShowSettlementController;
 use App\Http\Controllers\Api\Admin\Staff\OfficeAssignmentController;
+use App\Http\Controllers\Api\Admin\Staff\StaffActivityController;
 use App\Http\Controllers\Api\Admin\Staff\StaffController;
 use App\Http\Controllers\Api\Admin\UserDirectoryController;
 use App\Http\Controllers\Api\Admin\UserModerationController;
+use App\Http\Controllers\Api\Admin\UserNotificationPreferenceController;
 use App\Http\Controllers\Api\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\Auth\LoginController;
 use App\Http\Controllers\Api\Auth\LogoutController;
@@ -299,6 +303,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::post('/{staff}/reset-temp-password', [StaffController::class, 'resetTempPassword'])->name('reset-temp-password');
         Route::post('/{staff}/office-assignments', [OfficeAssignmentController::class, 'store'])->name('office-assignments.store');
         Route::delete('/{staff}/office-assignments/{assignment}', [OfficeAssignmentController::class, 'destroy'])->name('office-assignments.destroy');
+        Route::get('/{staff:public_id}/activity', StaffActivityController::class)->name('activity');
     });
 
 // ─── /admin — dashboard support: reference data, map, platform settings ──
@@ -306,10 +311,12 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     ->prefix('admin')
     ->name('admin.')
     ->group(function (): void {
+        Route::get('overview', OverviewController::class)->name('overview');
         Route::get('reference', ReferenceController::class)->name('reference');
         Route::get('map/overview', MapOverviewController::class)->name('map.overview');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::patch('settings', [SettingsController::class, 'update'])->name('settings.update');
+        Route::get('finance/report', FinanceReportController::class)->name('finance.report');
     });
 
 // /admin/users - admin account moderation
@@ -327,6 +334,8 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
     ->group(function (): void {
         Route::get('/', [UserDirectoryController::class, 'index'])->name('index');
         Route::get('{user}', [UserDirectoryController::class, 'show'])->name('show');
+        Route::patch('{user}/notification-preferences', UserNotificationPreferenceController::class)
+            ->name('notification-preferences.update');
     });
 
 // /admin/users - admin account moderation

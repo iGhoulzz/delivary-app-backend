@@ -26,6 +26,8 @@ beforeEach(function (): void {
     $world = TestWorld::create();
     $this->pickup = $world['pickup'];
     $this->dropoff = $world['dropoff'];
+    $this->office = $world['office'];
+    $this->region = $world['region'];
 
     $this->sender = User::factory()->create();
     $this->sender->assignRole('user');
@@ -62,6 +64,14 @@ it('creates a sender-paid order in awaiting_driver with one status log', functio
 
     expect($order->status)->toBe(OrderStatus::AwaitingDriver);
     expect($order->statusLogs()->count())->toBe(1);
+});
+
+it('snapshots the resolved pickup region and office on the order', function (): void {
+    $order = ($this->createOrder)();
+
+    // Finance by-office attribution reads these order-time snapshots (Critical Rule 1).
+    expect($order->pickup_region_id)->toBe($this->region->id)
+        ->and($order->pickup_office_id)->toBe($this->office->id);
 });
 
 it('broadcasts the awaiting order to a nearby online driver', function (): void {

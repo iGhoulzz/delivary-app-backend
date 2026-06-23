@@ -1052,3 +1052,31 @@ Backend-first, **additive-only** milestone preparing the admin API for the Vue d
 **Cross-review fixes:** (→Claude A) `me` driver/merchant flags added, map N+1 collapsed to a grouped query, reference labels reconciled to `{value,label}`. (→Claude C) strikes guarded to real drivers (404), void already-voided check moved under a row lock. (→Codex B/D) approved — onboarding confirmed to reuse the full lifecycle, order filters validate `exists`, merchant owner embed completed.
 
 **Verified on merged `main`:** full Pest **310/310** (1036 assertions), Pint clean, `composer validate --strict` passed, 58 admin routes, `migrate:status` all ran.
+
+---
+
+## 2026-06-22 Dashboard Support B - Codex Slices B + D
+
+Worked on branch `feat/dashboard-support-b`, following `docs/superpowers/specs/2026-06-22-dashboard-support-b-design.md` and `docs/superpowers/plans/2026-06-22-dashboard-support-b.md`.
+
+Scope implemented:
+
+- **Slice D - notification preferences:** added `PATCH /api/admin/users/{user}/notification-preferences` with `UpdateNotificationPreferencesRequest`, `NotificationPreferenceService`, `NotificationPreferencesResource`, and `UserNotificationPreferenceController`.
+- Added `StaffPolicy::updateNotificationPreferences()` to the existing mapped `User::class` policy, avoiding a second user policy registration.
+- The preference patch supports partial `push` / `sms` / `email` updates, rejects an empty body with 422, writes transactionally, and emits `Log::info('admin.notification_prefs.updated', ...)` with actor/target public ids plus changed keys.
+- **Slice B - overview:** added `GET /api/admin/overview` with `OverviewMetricsService`, `OverviewResource`, and `OverviewController`.
+- Overview stats derive `delivered_today` from `orders.delivered_at` in the reporting timezone, count active orders through the existing non-terminal status logic, count online/on-order driver profiles, and count pending settlements from the three driver-account buckets.
+- Overview activity returns the latest order status-log items with public order ids and public actor references only.
+
+Verification:
+
+- `vendor\bin\pint ...` passed for all Codex-touched Dashboard B files.
+- `DB_DATABASE=delivary_app_testing vendor\bin\pest tests\Feature\Admin\OverviewTest.php tests\Feature\Admin\NotificationPreferencesTest.php`: passed, 7 tests / 35 assertions.
+- `php artisan route:list --path=api/admin/overview`: shows `GET|HEAD api/admin/overview`.
+- `php artisan route:list --path=api/admin/users`: shows `PATCH api/admin/users/{user}/notification-preferences`.
+- `DB_DATABASE=delivary_app_testing php artisan migrate:status`: all migrations ran; no new migrations in these slices.
+- `DB_DATABASE=delivary_app_testing vendor\bin\pest`: passed, 318 tests / 1074 assertions.
+
+Boundary:
+
+- Claude-owned finance report and staff-activity timeline slices are not marked complete here. This entry covers only Codex-owned Overview and notification-preference editing.

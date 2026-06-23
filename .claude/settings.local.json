@@ -14,7 +14,9 @@
       "Bash(Get-ChildItem -Path \"database\\\\factories\" -Recurse -Filter \"*.php\")",
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(vendor/bin/pest tests/Unit/Resources/Broadcast/DriverForOrderResourceTest.php)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(vendor/bin/pint config/reporting.php app/Support/ReportingTime.php tests/Unit/Reporting/ReportingTimeTest.php)",
+      "Bash(vendor/bin/pest tests/Unit/Reporting/ReportingTimeTest.php -v)"
     ]
   }
 }

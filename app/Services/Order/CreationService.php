@@ -144,6 +144,10 @@ final class CreationService
                     (float) $input['pickup_location']['lat'],
                     (float) $input['pickup_location']['lng'],
                 ),
+                // Snapshot the resolved pickup region + office (Critical Rule 1) so
+                // finance by-office attribution reads order-time truth, not today's map.
+                'pickup_region_id' => $fresh['region_id'],
+                'pickup_office_id' => $fresh['office_id'],
                 'pickup_notes' => $input['pickup_notes'] ?? null,
                 'pickup_code' => $codePair['pickup'],
                 'pickup_code_attempts' => 0,
