@@ -53,22 +53,13 @@ it was checked against `PricingService` and the schema before being locked here.
 
 - **Admin-created orders** ("New order" button) — deferred at user direction.
 - **Office-staff dashboard / office-context cut** — later milestone.
-- **A persisted `orders.pickup_region_id` + `orders.pickup_office_id` (production-hardening follow-up).**
-  Office attribution is currently done by spatial resolution at *report* time (§5.2). This has a known
-  edge case flagged in Codex review: `byOffice()` runs `ST_Contains` with no `LIMIT 1`, so if two
-  **overlapping** active regions both contain a pickup, that delivered order is counted under **both**
-  offices — inflating `by_office` past `accrued.total`. `PricingService::resolveRegion()` avoids this
-  because it uses `LIMIT 1` (the order is priced once). The risk is therefore confined to finance
-  *reporting* attribution — never customer charge, settlement, payout, or order creation. **Non-blocking
-  for this milestone** (active regions are operationally non-overlapping today). The proper fix —
-  matching the existing snapshot philosophy (commission/fees are snapshotted at creation, Critical
-  Rule 1) — is to **snapshot the resolved pickup region + office on the order at pricing time**:
-  add nullable `orders.pickup_region_id` + `orders.pickup_office_id`, persist them when
-  `PricingService` resolves the region, switch finance `by_office` + the `office_id` filter to read
-  the snapshot instead of re-running `ST_Contains`, and backfill older orders (resolve pickup once, or
-  leave `unassigned`). Benefits: no double-count from overlapping regions, and historical finance
-  reports stay stable even if region boundaries change later. Needs a migration → a separate, explicit
-  future decision, not part of this additive milestone.
+- ~~**A persisted `orders.pickup_region_id` + `orders.pickup_office_id`.**~~ **DONE — implemented
+  before merge** (Codex production-hardening review). Originally deferred, then pulled into scope: a
+  report-time `ST_Contains` with no `LIMIT 1` could double-count a delivered order across two
+  overlapping active regions. The order now snapshots `pickup_region_id` + `pickup_office_id` at
+  creation and finance reads the snapshot (§5.2) — so each order counts once and reports stay stable
+  across boundary changes. This was the one schema change in this otherwise additive milestone
+  (nullable columns + one-time backfill; no retroactive financial mutation — Critical Rule 20).
 - **A DB audit trail for notification-pref edits** — there is no generic admin-action audit table and
   the `*_notifications_enabled` columns carry no `updated_by_admin_id`; adding one breaks the additive
   guardrail. The write is transactional + `Log::info` only this milestone (§6.4).
@@ -115,17 +106,21 @@ it was checked against `PricingService` and the schema before being locked here.
   from in-flight orders' snapshots), never mixed into accrued. *(User decision, 2026-06-22 — option A.)*
 - All sums in SQL using decimal types; PHP-side combination via `bcmath`. **No floats.**
 
-### 5.2 Office attribution
-- **Accrued revenue → office:** spatial resolution of the order's `pickup_location` against active
-  region boundaries → `regions.office_id`:
-  `ST_Contains(regions.boundary::geometry, orders.pickup_location::geometry)`, joined through
-  `service_areas` with **`regions.is_active = true AND service_areas.is_active = true`** — mirroring
-  `PricingService::resolveRegion()` **exactly** (it checks both active flags). Orders whose pickup
-  resolves to no active region, or a region with null `office_id`, fall into an `unassigned` bucket.
+### 5.2 Office attribution (snapshot-based — implemented)
+- **Snapshot at creation (Critical Rule 1).** Each order snapshots `pickup_region_id` +
+  `pickup_office_id`: `PricingService::resolveRegion()` resolves the pickup against active regions
+  inside active service areas (`LIMIT 1`, both `is_active`), and `CreationService` persists that
+  region + its `regions.office_id` on the order alongside the commission/fee snapshots.
+- **Accrued revenue → office:** finance groups on **`orders.pickup_office_id`** (left-joined to
+  `office_locations` for `{public_id, name}`); a null snapshot → `unassigned`. Reading the snapshot —
+  rather than re-running `ST_Contains` at report time — means each order counts under exactly one
+  office (**no double-count from overlapping regions**) and reports stay stable if region boundaries
+  later change. Existing rows were backfilled once by the migration (spatial resolve, active
+  region+area).
 - **Cash → office:** stored `settlements.office_id` / `seller_payouts.office_id` (the physical
   counter where cash moved). Never the driver's current office.
-- The optional `office_id` request filter resolves **per side** with the same rule (revenue side
-  spatial; cash side stored column).
+- The optional `office_id` request filter resolves **per side**: revenue side filters
+  `orders.pickup_office_id`; cash side uses the stored `office_id` columns.
 - **Never** `driver_profiles.office_id` for order attribution — it is mutable and does not represent
   where the order belongs.
 
@@ -220,7 +215,7 @@ Backs `finance.jsx`. Params: `range ∈ {today,7d,30d,all}` (default `30d`), opt
   `cash.total = settlement_cash_net − payouts`. Disputed/cancelled settlements and unpaid payouts are
   excluded.
 - `accrued` from order snapshots over revenue-bearing orders **bucketed on `delivered_at`** (§5.1),
-  office via §5.2 spatial rule.
+  office via the §5.2 `pickup_office_id` snapshot.
 - All amounts are decimal strings (no float JSON).
 
 ### 6.3 `GET /admin/staff/{staff}/activity`  *(NEW — Slice C)*
@@ -332,9 +327,10 @@ event sources) + C2 (latest-pointer attribution sources) sharing one resource; d
 - **Revenue status-filter test:** a `delivered` order counts; a `cancelled_by_user` order **and** an
   in-flight (`assigned`/`picked_up`) order with identical non-zero snapshots are **excluded** from
   accrued. Proves the snapshot-at-creation trap is closed.
-- **Office attribution test:** revenue attributed via pickup→region→office spatial join through
-  **active** regions+service_areas; cash via stored `office_id`; an out-of-region (or inactive-area)
-  pickup → `unassigned`.
+- **Office attribution tests:** order snapshots `pickup_region_id`/`pickup_office_id` at creation
+  (`PricingService` resolve → `CreationService` persist); finance groups on `pickup_office_id` (null →
+  `unassigned`), counts each order once (no overlap double-count), and stays stable when a region is
+  later changed; cash via stored `settlements`/`seller_payouts.office_id`.
 - **`active_orders` test:** a non-terminal `at_office` order counts; `delivered`/`cancelled_*` do not.
 - **Pending-settlements test:** a driver with only `earnings_balance <> 0` (zero cash) is counted.
 - **Staff-activity coverage test:** order action by `actor_type='admin'` appears (and one by
