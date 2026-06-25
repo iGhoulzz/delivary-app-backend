@@ -14,6 +14,20 @@
 
 ---
 
+## Slice ownership & merge order (Claude / Codex, per `WORKFLOW.md`)
+
+The new repo carries the **same Claude+Codex workflow** — Task 0.1 copies `docs/WORKFLOW.md` (+ starts a `docs/CODEX.md` log) from the backend repo into `delivary-dashboard/docs/`. Foundation is a coupled bootstrap, so it runs in two phases:
+
+| Phase | Owner | Tasks | Notes |
+|---|---|---|---|
+| **1 — Base (merges first)** | **Claude** | 0.1 scaffold+remote+WORKFLOW, 0.2 tooling, 0.3 theme, 0.4 i18n, 0.11 MSW harness | The shared spine everything imports. Includes **typed stubs** of the ui primitives (`Button/Field/Card/Icon/Spinner/Avatar/StatusPill`) so dependents compile before Codex builds the real ones. |
+| **2 — Auth vertical** | **Claude** | 0.5 api client, 0.6 auth provider, 0.7 router+guards, 0.10 auth pages, 0.12 Playwright smoke | Security-sensitive (token/interceptors/guards/login) — Claude's lane (§1). Uses the stubbed primitives. |
+| **2 — Presentation** | **Codex** | 0.8 design-system primitives (real port from `icons.jsx`/`ui.jsx`), 0.9 app shell (Sidebar/TopBar/AppLayout), 0.13 CI + README | Rebases onto Claude's base; **replaces the primitive stubs** with the full designed components and swaps the router's placeholder layout for the real `AppLayout`. UI/mechanical — Codex's lane. |
+
+**Merge order:** Claude Phase-1 base → merge first; Claude Phase-2 auth vertical and Codex Phase-2 presentation proceed in parallel against the base; Codex rebases to absorb Claude's auth-vertical additions (they touch disjoint files except `router.tsx`/`main.tsx`, which Claude owns and Codex rebases onto). Cross-review both directions before merge; keep the Playwright smoke green post-merge.
+
+---
+
 ## File-structure map (Slice 0)
 
 ```
@@ -56,18 +70,24 @@ npm create vite@latest delivary-dashboard -- --template react-ts
 cd delivary-dashboard
 npm install
 ```
-- [ ] **Step 2 — init git + first commit:**
+- [ ] **Step 2 — copy the shared workflow into the new repo:**
+```bash
+mkdir docs
+cp ../delivary-app/docs/WORKFLOW.md docs/WORKFLOW.md
+printf '# Codex Implementation Log — delivary-dashboard\n\n> One entry per slice (files, behaviour, verification). Mirrors the backend repo convention.\n' > docs/CODEX.md
+```
+- [ ] **Step 3 — init git + first commit:**
 ```bash
 git init -b main
 git add -A
-git commit -m "chore: vite react-ts scaffold"
+git commit -m "chore: vite react-ts scaffold + Claude/Codex WORKFLOW"
 ```
-- [ ] **Step 3 — wire the GitHub remote** (the user created the empty `iGhoulzz/delivary-dashboard`; `gh` is not installed, so add the remote by URL):
+- [ ] **Step 4 — wire the GitHub remote** (only once the user has created the empty `iGhoulzz/delivary-dashboard`; `gh` is not installed, so add the remote by URL — **skip/defer if the repo doesn't exist yet; local-only is fine to start**):
 ```bash
 git remote add origin https://github.com/iGhoulzz/delivary-dashboard.git
 git push -u origin main
 ```
-- [ ] **Step 4 — verify** `npm run dev` serves on `http://localhost:5173`. Stop it. Commit nothing further here.
+- [ ] **Step 5 — verify** `npm run dev` serves on `http://localhost:5173`. Stop it. Commit nothing further here.
 
 ## Task 0.2 — Tooling: TanStack Query, Router, i18n, axios, Tailwind, test libs
 
