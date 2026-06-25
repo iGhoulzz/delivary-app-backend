@@ -1098,3 +1098,24 @@ Verification:
 
 - Docs-only + Git tracking cleanup; no backend code changed.
 - `git diff --check`: passed.
+
+---
+
+## 2026-06-25 Dashboard frontend handoff
+
+Current direction:
+
+- The dashboard frontend is a **separate repo/codebase**: `C:\Users\User\Desktop\delivary-dashboard`, GitHub remote `iGhoulzz/delivary-dashboard`.
+- The backend repo remains the source of truth for process docs/specs/plans under `docs/superpowers/`; the frontend repo README should link back to those docs.
+- Framework decision changed from the older Vue note to **React 18 + TypeScript + Vite**, because the final dashboard prototype in `docs/design/dashboard/` is already React JSX/Tailwind and can be productionized with less translation risk.
+- Stack: React Router v6, TanStack Query, axios bearer-token API client, react-i18next EN/AR + RTL, Tailwind, MapLibre GL with configurable tile/style URL, Vitest + React Testing Library + MSW.
+- Admin dashboard is **admin-only** and binds to backend Dashboard Support A+B contracts. Do not implement admin-created orders; backend still does not support them.
+- Frontend identity rule: route/domain identities use backend `public_id`; known exception is reference-region numeric ids from `/api/admin/reference`.
+- API base should include `/api`, e.g. `VITE_API_BASE_URL=http://delivary-app.test/api` for Herd or `http://localhost:8000/api` for artisan serve.
+- Auth guard states: `401` clears token and redirects to login; `403 error=password_change_required` redirects to `/change-password`; logged-in non-admin gets a forbidden/logout path, not the dashboard shell.
+
+Next session checklist:
+
+- If working in the backend repo, review/finish `docs/superpowers/specs/2026-06-23-dashboard-frontend-design.md` and then write the Slice 0 plan.
+- If working in the frontend repo, start from that spec and build **Slice 0 - Foundation** only: scaffold, theme/RTL/design primitives, router, API client, auth/login, password-change gate, empty shell, and required Playwright smoke `login -> /auth/me -> overview shell`.
+- When switching Codex to the frontend folder, explicitly tell the new session to read this handoff plus the frontend spec in the backend repo; a fresh session will not automatically have this chat history.
