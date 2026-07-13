@@ -65,3 +65,30 @@ it('suspends a driver by user public_id', function (): void {
     expect($response->json('driver_profile.status'))->toBe(DriverStatus::Suspended->value);
     expect($profile->fresh()->status)->toBe(DriverStatus::Suspended);
 });
+
+it('searches drivers by vehicle plate', function (): void {
+    actingAsAdmin();
+
+    $matchUser = User::factory()->create();
+    $matchUser->assignRole('driver');
+    DriverProfile::factory()->create([
+        'user_id' => $matchUser->id,
+        'status' => DriverStatus::Active->value,
+        'vehicle_plate' => 'TRP-ZX99',
+    ]);
+
+    $otherUser = User::factory()->create();
+    $otherUser->assignRole('driver');
+    DriverProfile::factory()->create([
+        'user_id' => $otherUser->id,
+        'status' => DriverStatus::Active->value,
+        'vehicle_plate' => 'BEN-1100',
+    ]);
+
+    $response = $this->getJson('/api/admin/drivers?search=ZX99');
+
+    expect($response->status())->toBe(200);
+    $ids = collect($response->json('data'))->pluck('id')->all();
+    expect($ids)->toContain($matchUser->public_id);
+    expect($ids)->not->toContain($otherUser->public_id);
+});

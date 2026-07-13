@@ -35,10 +35,13 @@ final class DriverController extends Controller
             ->oldest();
 
         if ($search = $request->input('search')) {
-            $query->whereHas('user', fn ($u) => $u
-                ->where('phone_number', 'like', '%'.$search.'%')
-                ->orWhere('first_name', 'ilike', '%'.$search.'%')
-                ->orWhere('last_name', 'ilike', '%'.$search.'%'));
+            $query->where(function ($q) use ($search): void {
+                $q->whereHas('user', fn ($u) => $u
+                    ->where('phone_number', 'like', '%'.$search.'%')
+                    ->orWhere('first_name', 'ilike', '%'.$search.'%')
+                    ->orWhere('last_name', 'ilike', '%'.$search.'%'))
+                    ->orWhere('vehicle_plate', 'ilike', '%'.$search.'%');
+            });
         }
 
         return DriverProfileResource::collection($query->paginate(25));
