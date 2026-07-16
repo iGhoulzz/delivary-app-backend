@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\Admin\Driver\StrikeController as AdminDriverStrikeC
 use App\Http\Controllers\Api\Admin\DriverController as AdminDriverController;
 use App\Http\Controllers\Api\Admin\FinanceReportController;
 use App\Http\Controllers\Api\Admin\MapOverviewController;
+use App\Http\Controllers\Api\Admin\MapZonesController;
 use App\Http\Controllers\Api\Admin\MerchantController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Api\Admin\OverviewController;
@@ -314,6 +315,7 @@ Route::middleware(['auth:sanctum', 'role:admin', 'staff.password_change_required
         Route::get('overview', OverviewController::class)->name('overview');
         Route::get('reference', ReferenceController::class)->name('reference');
         Route::get('map/overview', MapOverviewController::class)->name('map.overview');
+        Route::get('map/zones', MapZonesController::class)->name('map.zones');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings.index');
         Route::patch('settings', [SettingsController::class, 'update'])->name('settings.update');
         Route::get('finance/report', FinanceReportController::class)->name('finance.report');
