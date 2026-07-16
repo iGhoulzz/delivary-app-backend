@@ -31,8 +31,8 @@ NEW
   tests/Feature/Order/OrderNumberTest.php              # creation + search feature tests
 MODIFY
   app/Models/Order.php                                 # creating hook (assign), keep out of update path
-  app/Http/Requests/Order/AdminListOrdersRequest.php   # (if it validates search) — no change unless needed
-  app/Http/Controllers/Api/Admin/OrderController.php   # add order_number to the search closure
+  app/Services/Order/CreationService.php               # wrap DB::transaction() in a unique-violation retry
+  app/Http/Controllers/Api/Admin/OrderController.php   # add order_number to the search closure (guard empty term)
   app/Http/Resources/Order/AdminOrderResource.php
   app/Http/Resources/Order/OrderResource.php
   app/Http/Resources/Order/DriverOrderResource.php
@@ -49,6 +49,13 @@ MODIFY
   app/Services/Reporting/OverviewMetricsService.php
   app/Services/Reporting/StaffActivityService.php
   app/Services/Reporting/FinanceReportService.php
+  # selective order loads that currently select only id/public_id/etc. — each MUST add order_number to its
+  # column selection so it isn't emitted as null:
+  app/Http/Controllers/Api/Me/Settlement/ShowEarningsController.php
+  app/Events/SellerEarningCleared.php
+  app/Jobs/ClearSellerEarningsJob.php
+  app/Services/Settlement/SettlementService.php
+  app/Services/Settlement/SellerPayoutService.php
 ```
 
 ---
@@ -78,7 +85,16 @@ it('computes the ISO 7064 MOD 37,36 check character (known vectors)', function (
     ['0', '2'],
     ['00', '4'],
     ['A12425GABC1234002', 'M'], // reference vector from ISO 7064 MOD 37,36
+    // Bodies whose check character is a letter (proves the check char lives in the full 0-9A-Z alphabet):
+    ['00000002', 'U'],
+    ['00000005', 'O'],
+    ['00000008', 'I'],
+    ['00000088', 'L'],
 ]);
+
+it('throws on a non-alphanumeric character in the checksum input', function (): void {
+    gen()->checkCharacter('7K3M-9Q2D'); // dash is not alphanumeric — must throw, never silently 0
+})->throws(InvalidArgumentException::class);
 
 it('generates ORD-XXXX-XXXX-C with a Crockford body and a valid check', function (): void {
     $number = gen()->build();
@@ -93,11 +109,18 @@ it('rejects a corrupted check character', function (): void {
     expect(gen()->isValid($bad))->toBeFalse();
 });
 
-it('rejects I/L/O/U in the body but accepts them in the check position (literal)', function (): void {
-    expect(gen()->isValid('ORD-IIII-IIII-1'))->toBeFalse(); // I not allowed in body
-    // A body whose computed check is a letter is still valid; the check char is never Crockford-normalized.
-    $number = gen()->build();
-    expect(gen()->isValid($number))->toBeTrue();
+it('aliases I/L→1 and O→0 in the body, rejects U, and treats the check char literally', function (): void {
+    // Canonical numbers validate.
+    expect(gen()->isValid(gen()->build()))->toBeTrue();
+    // Body 00000002 → check U. Its aliased spelling (O→0) must validate the same:
+    expect(gen()->isValid('ORD-OOOO-OOO2-U'))->toBeTrue();
+    // I/L alias to 1: body 11111111 spelled with I must validate iff the check matches body 11111111.
+    $check = gen()->checkCharacter('11111111');
+    expect(gen()->isValid("ORD-IIII-IIII-{$check}"))->toBeTrue();
+    // U is NOT a valid body character (Crockford omits it; it is not an alias).
+    expect(gen()->isValid('ORD-UUUU-UUUU-1'))->toBeFalse();
+    // The check character is literal — a legit letter check (e.g. U) is accepted, never normalized.
+    expect(gen()->isValid('ORD-0000-0002-U'))->toBeTrue();
 });
 
 it('normalizes search terms: dashless, case-insensitive, partial (body only)', function (): void {
@@ -124,20 +147,27 @@ final class OrderNumberGenerator
 {
     private const PREFIX = 'ORD';
 
+    private const MAX_ATTEMPTS = 5;
+
     /** Crockford Base32 — 0-9 A-Z minus I, L, O, U (the characters humans confuse). */
     private const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
     /** ISO 7064 alphanumeric alphabet: value('0')=0 … value('9')=9, value('A')=10 … value('Z')=35. */
     private const ALPHANUMERIC = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-    /** Generate a canonical, unique order number (existence-checked). */
+    /** Generate a canonical, unique order number (existence-checked, bounded attempts). */
     public function generate(): string
     {
-        do {
+        for ($attempt = 0; $attempt < self::MAX_ATTEMPTS; $attempt++) {
             $candidate = $this->build();
-        } while (Order::query()->where('order_number', $candidate)->exists());
+            if (! Order::query()->where('order_number', $candidate)->exists()) {
+                return $candidate;
+            }
+        }
 
-        return $candidate;
+        throw new \RuntimeException(
+            'Could not generate a unique order_number after '.self::MAX_ATTEMPTS.' attempts.',
+        );
     }
 
     /** Build one candidate: ORD-BBBB-BBBB-C (no uniqueness check). */
@@ -172,7 +202,7 @@ final class OrderNumberGenerator
         foreach (str_split(strtoupper($body)) as $char) {
             $value = strpos(self::ALPHANUMERIC, $char);
             if ($value === false) {
-                $value = 0; // defensive: non-alphanumeric contributes 0 (never happens for a Crockford body)
+                throw new \InvalidArgumentException("Non-alphanumeric character '{$char}' in checksum input.");
             }
             $sum = ($value + $product) % $other;
             $product = (2 * ($sum === 0 ? $other : $sum)) % $modulus;
@@ -184,21 +214,25 @@ final class OrderNumberGenerator
         return self::ALPHANUMERIC[$checkValue];
     }
 
-    /** Strict validation of a canonical stored value ORD-BBBB-BBBB-C. */
+    /**
+     * Validate an order number. The check character is compared literally; the BODY gets Crockford
+     * input-aliasing (I/L → 1, O → 0), and U is rejected (not a Crockford symbol, not an alias).
+     */
     public function isValid(string $orderNumber): bool
     {
         $value = strtoupper(trim($orderNumber));
         if (preg_match('/^ORD-([0-9A-Z]{4})-([0-9A-Z]{4})-([0-9A-Z])$/', $value, $m) !== 1) {
             return false;
         }
+        $check = $m[3];        // literal — never Crockford-normalized (may itself be I/L/O/U)
         $body = $m[1].$m[2];
-        // Body is canonical Crockford: I, L, O, U are never valid in a body position.
-        if (preg_match('/[ILOU]/', $body) === 1) {
-            return false;
+        if (str_contains($body, 'U')) {
+            return false;      // U is not a Crockford body symbol and has no alias
         }
+        // Crockford input-aliasing on the BODY only: I/L → 1, O → 0.
+        $body = strtr($body, ['I' => '1', 'L' => '1', 'O' => '0']);
 
-        // Check character is literal (may itself be I/L/O/U) — compare, never Crockford-normalize it.
-        return $this->checkCharacter($body) === $m[3];
+        return $this->checkCharacter($body) === $check;
     }
 
     /** Forgiving normalization for partial/fuzzy search: upper-case, strip non-alphanumerics. */
@@ -269,7 +303,31 @@ return new class extends Migration
 };
 ```
 
-- [ ] **Step 2: Run** `DB_DATABASE=delivary_app_testing php artisan migrate` on the test DB (RefreshDatabase in tests re-runs it). **Step 3: Tinker smoke** — `php artisan tinker --execute="echo \Schema::hasColumn('orders','order_number')?'1':'0';"` → `1`. **Step 4: Commit** `git add database/migrations && git commit -m "feat(orders): order_number column + backfill + unique"`.
+- [ ] **Step 2: Run** `DB_DATABASE=delivary_app_testing php artisan migrate`. **Step 3: Automated
+  backfill/unique/not-null test** — prove the invariant every order carries a unique, valid, non-null
+  `order_number`, and the DB enforces it (add to `tests/Feature/Order/OrderNumberTest.php`):
+
+```php
+it('backfills a unique, valid, non-null order_number for every order and enforces uniqueness', function (): void {
+    $orders = Order::factory()->count(5)->create();
+
+    // Every order has a valid, non-null number; all are distinct.
+    $numbers = $orders->pluck('order_number');
+    expect($numbers->contains(null))->toBeFalse();
+    expect($numbers->unique()->count())->toBe(5);
+    $numbers->each(fn ($n) => expect((new \App\Support\OrderNumber\OrderNumberGenerator())->isValid($n))->toBeTrue());
+
+    // DB-level: NOT NULL + UNIQUE are enforced (a duplicate insert throws).
+    expect(fn () => \Illuminate\Support\Facades\DB::table('orders')
+        ->where('id', $orders[1]->id)->update(['order_number' => $orders[0]->order_number]))
+        ->toThrow(\Illuminate\Database\UniqueConstraintViolationException::class);
+});
+```
+
+  (RefreshDatabase runs the migration, so newly-created orders exercise the same generator the backfill uses;
+  the duplicate `DB::table()->update()` proves the UNIQUE index at the database level.)
+
+- [ ] **Step 4: Tinker smoke** — `php artisan tinker --execute="echo \Schema::hasColumn('orders','order_number')?'1':'0';"` → `1`. **Step 5: Commit** `git add database/migrations tests/Feature/Order/OrderNumberTest.php && git commit -m "feat(orders): order_number column + backfill + unique"`.
 
 > If the orders table is large in production, split into two migrations (add-nullable+backfill, then constrain) to shorten the lock window — decision recorded here; at current volume one file is fine.
 
@@ -320,14 +378,60 @@ if (empty($order->order_number)) {
 Keep `order_number` **out of `$fillable`** (so `update(['order_number' => …])` is ignored — immutability). Add the doc-note that it is generated once and never updated.
 
 - [ ] **Step 4: Run — expect PASS.**
-- [ ] **Step 5: Explicit unique-violation retry** — wrap the order-creation call site(s) so a rare insert-time
-  unique collision on `order_number` regenerates and retries. Add a helper (e.g., in the order-creation service
-  that already persists new orders) — a `retry(3)`-style loop that catches the Postgres unique-violation on
-  `order_number` (`\Illuminate\Database\UniqueConstraintViolationException`, or `QueryException` with SQLSTATE
-  `23505` naming `orders_order_number_unique`), clears the model's `order_number`, and re-saves. Add a focused
-  test that seams a pre-set duplicate to prove the retry path regenerates. (Do **not** rely on `DB::transaction()`
-  `$attempts` — it retries deadlocks only.)
-- [ ] **Step 6: Run — PASS. Pint + commit** `git commit -m "feat(orders): generate immutable order_number on create with retry"`.
+- [ ] **Step 5: Explicit unique-violation retry — OUTSIDE the transaction.** `CreationService::create()` persists
+  the order inside `return DB::transaction(function () { … })` (`app/Services/Order/CreationService.php:113`). A
+  unique violation **aborts** that Postgres transaction, so re-saving *inside* it cannot succeed — the retry must
+  re-run the **whole** transaction (which regenerates `order_number` via the `creating` hook). Wrap the existing
+  `DB::transaction(...)` call in a bounded retry that catches **only** the `order_number` unique violation:
+
+```php
+// app/Services/Order/CreationService.php — wrap the existing `return DB::transaction(function () use (...) {...});`
+for ($attempt = 0; ; $attempt++) {
+    try {
+        return DB::transaction(function () use (/* existing captures */) {
+            /* existing transaction body, unchanged */
+        });
+    } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+        // Retry ONLY the order_number collision; anything else (or exhaustion) rethrows.
+        if ($attempt >= 2 || ! str_contains($e->getMessage(), 'orders_order_number_unique')) {
+            throw $e;
+        }
+        // loop: the next DB::transaction() re-runs and the creating hook generates a fresh order_number.
+    }
+}
+```
+
+  (`UniqueConstraintViolationException` = Laravel's SQLSTATE `23505` wrapper. If unavailable, catch
+  `\Illuminate\Database\QueryException` and gate on `$e->getCode() === '23505'` **and** the constraint name.)
+
+- [ ] **Step 6: Deterministic retry test (seam).** Bind an `OrderNumberGenerator` **double** in the container
+  whose `generate()` returns an **already-used** number on the first call and a fresh one on the second; drive a
+  real `CreationService::create(...)` (reuse the existing order-creation test scaffolding — the setup used by the
+  order lifecycle tests / `scripts/orders-e2e.php`) and assert it **succeeds** with a fresh, valid `order_number`
+  and that `generate()` was called twice:
+
+```php
+it('retries the whole transaction on an order_number unique violation', function (): void {
+    $existing = Order::factory()->create();
+    $calls = 0;
+    $fake = Mockery::mock(\App\Support\OrderNumber\OrderNumberGenerator::class)->makePartial();
+    $fake->shouldReceive('generate')->andReturnUsing(function () use (&$calls, $existing) {
+        return $calls++ === 0 ? $existing->order_number : (new \App\Support\OrderNumber\OrderNumberGenerator())->generate();
+    });
+    app()->instance(\App\Support\OrderNumber\OrderNumberGenerator::class, $fake);
+
+    // …drive CreationService::create() with the standard valid input (existing creation-test helper)…
+    // expect the created order to persist with a fresh order_number (not $existing->order_number);
+    // expect($calls)->toBe(2);
+});
+```
+
+  > If wiring the full `CreationService` input in a unit test is heavy, extract the retry into a tiny
+  > `withOrderNumberRetry(Closure $tx)` helper on `CreationService` and unit-test **that** directly with a
+  > closure that throws a `UniqueConstraintViolationException` (message containing `orders_order_number_unique`)
+  > on the first call and returns on the second — proving the loop catches, bounds, and rethrows correctly.
+
+- [ ] **Step 7: Run — PASS. Pint + commit** `git commit -m "feat(orders): generate immutable order_number on create with transaction retry"`.
 
 ---
 
@@ -335,12 +439,24 @@ Keep `order_number` **out of `$fillable`** (so `update(['order_number' => …])`
 
 **Files:** Modify `app/Http/Controllers/Api/Admin/OrderController.php` (the `index` search closure).
 
-- [ ] **Step 1: Failing test** (append to `tests/Feature/Order/OrderNumberTest.php`) — requires an admin actor
-  (reuse the `actingAsAdmin()` helper pattern from `tests/Feature/Admin/AdminDriverEndpointTest.php`):
+- [ ] **Step 1: Failing test** (append to `tests/Feature/Order/OrderNumberTest.php`). Define a **uniquely-named
+  local** admin helper — do **not** rely on `actingAsAdmin()` from another test file (Pest per-file helpers
+  aren't loaded when this file runs alone):
 
 ```php
+// near the top of tests/Feature/Order/OrderNumberTest.php:
+function actingAsOrderAdmin(): \App\Models\User
+{
+    \Spatie\Permission\Models\Role::findOrCreate('admin', 'web');
+    $admin = \App\Models\User::factory()->create();
+    $admin->assignRole('admin');
+    \Laravel\Sanctum\Sanctum::actingAs($admin);
+
+    return $admin;
+}
+
 it('finds an order by order_number, with and without dashes and case', function (): void {
-    actingAsAdmin();
+    actingAsOrderAdmin();
     $order = Order::factory()->create();
     $number = $order->order_number;               // ORD-XXXX-XXXX-C
     $dashless = str_replace('-', '', $number);    // ORDXXXXXXXXC
@@ -351,24 +467,32 @@ it('finds an order by order_number, with and without dashes and case', function 
         expect(collect($res->json('data'))->pluck('id'))->toContain($order->public_id);
     }
 });
+
+it('does not match every order when the term normalizes to empty', function (): void {
+    actingAsOrderAdmin();
+    Order::factory()->count(3)->create();
+    // '---' → normalizeSearchTerm → '' — the order_number clause must be SKIPPED (never LIKE '%%').
+    $res = $this->getJson('/api/admin/orders?search='.urlencode('---'));
+    expect($res->json('data'))->toBeEmpty();
+});
 ```
 
 - [ ] **Step 2: Run — expect FAIL. Step 3: Implement** — in `OrderController@index`, extend the existing
-  `search` closure so it also matches `order_number` **normalized** (dash-insensitive, case-insensitive) using
-  `OrderNumberGenerator::normalizeSearchTerm`. Add an `orWhereRaw` that compares the dash-stripped, upper-cased
-  stored value against the normalized term:
+  `search` closure so it also matches `order_number` **normalized** (dash/case-insensitive), **guarding the
+  empty term**:
 
 ```php
-// inside the existing:  $query->where(function ($q) use ($search) { … })
+// inside the existing:  $query->where(function ($q) use ($search) { … existing orWhere clauses … })
 $normalized = app(\App\Support\OrderNumber\OrderNumberGenerator::class)->normalizeSearchTerm($search);
-// …existing orWhere clauses (public_id, tracking_token, names, phones)…
-$q->orWhereRaw("upper(replace(order_number, '-', '')) like ?", ['%'.$normalized.'%']);
+if ($normalized !== '') {  // guard: an empty normalized term must NOT produce LIKE '%%'
+    $q->orWhereRaw("upper(replace(order_number, '-', '')) like ?", ['%'.$normalized.'%']);
+}
 ```
 
-> **Exact SQL pinned:** match on the expression `upper(replace(order_number,'-',''))` with `LIKE '%…%'`. If
-> `EXPLAIN` shows this is hot on large tables, add a functional index
-> `CREATE INDEX orders_order_number_norm_idx ON orders (upper(replace(order_number,'-','')))` in a follow-up
-> migration; not required at current volume. Keep the existing search terms untouched.
+> **Exact SQL pinned:** `upper(replace(order_number,'-',''))` with `LIKE '%…%'`, only when the normalized term
+> is non-empty. Note a plain functional index does **not** accelerate a leading-wildcard `%term%` scan — if this
+> ever gets hot, use a **trigram** index (`pg_trgm`, `gin (… gin_trgm_ops)`) in a follow-up; not needed at
+> current volume. Keep the existing search terms untouched.
 
 - [ ] **Step 4: Run — PASS. Pint + commit** `git commit -m "feat(orders): search by order_number (dash/case-insensitive)"`.
 
@@ -386,17 +510,19 @@ $q->orWhereRaw("upper(replace(order_number, '-', '')) like ?", ['%'.$normalized.
 - [ ] **Step 1: Failing tests** — one representative assertion per category (add to `tests/Feature/Order/OrderNumberTest.php` and the relevant existing test files):
 
 ```php
-it('exposes order_number on the admin order resource', function (): void {
-    actingAsAdmin();
+it('exposes order_number on the admin order resource (wrapped in data)', function (): void {
+    actingAsOrderAdmin();
     $order = Order::factory()->create();
     $res = $this->getJson('/api/admin/orders/'.$order->public_id);
-    expect($res->json('order_number'))->toBe($order->order_number);
-    expect($res->json('id'))->toBe($order->public_id); // id unchanged
+    // AdminOrderResource single responses are wrapped in `data`.
+    expect($res->json('data.order_number'))->toBe($order->order_number);
+    expect($res->json('data.id'))->toBe($order->public_id); // id unchanged
 });
 ```
 Plus a nested-reference assertion (e.g. `DriverStrikeResource` renders `order.order_number` beside `order.id`)
 and an activity-feed assertion (`OverviewMetricsService` activity item carries `order_number` beside
-`order_public_id`). Model each on the existing tests for those resources/services.
+`order_public_id`). Model each on the existing tests for those resources/services, and **check each response's
+actual envelope** (`data`-wrapped vs bare) when asserting the JSON path.
 
 - [ ] **Step 2: Run — expect FAIL. Step 3: Implement** — add the field in each file (read each first; place it
   next to the order id):
@@ -413,9 +539,17 @@ and an activity-feed assertion (`OverviewMetricsService` activity item carries `
   **Activity / reporting services** — add `order_number` beside the emitted `order_public_id`:
   `Reporting/OverviewMetricsService`, `Reporting/StaffActivityService`, `Reporting/FinanceReportService`.
 
-  For each: confirm the order model/relation is loaded (eager-load where a resource previously only selected
-  specific columns, so `order_number` is present). Where a settlement/reporting payload does **not** actually
-  emit an order reference, skip it (verify per file — the rule is "beside an existing order id").
+  **Selective order loads (MUST add the column to the `select`/`->select([...])`/`with([… => fn => select])`)** —
+  these currently load orders with an explicit column list that omits `order_number`, so it would serialize as
+  `null` unless added. Add `order_number` to each order column selection:
+  `Http/Controllers/Api/Me/Settlement/ShowEarningsController.php`, `Events/SellerEarningCleared.php`,
+  `Jobs/ClearSellerEarningsJob.php`, `Services/Settlement/SettlementService.php`,
+  `Services/Settlement/SellerPayoutService.php`.
+
+  For each file: confirm the order model/relation is loaded and that `order_number` is in the selected columns
+  (a plain full model load already has it; a **selective** load must add it explicitly). Where a
+  settlement/reporting payload does **not** actually emit an order reference, skip it (verify per file — the rule
+  is "beside an existing order id").
 
 - [ ] **Step 4: Run — the representative tests PASS; full suite green.** **Step 5: Pint + commit**
   `git commit -m "feat(orders): surface order_number beside id in all order payloads"`.

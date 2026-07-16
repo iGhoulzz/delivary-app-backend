@@ -128,16 +128,25 @@ final class MapZonesController extends Controller
   office (nullable), plus an inactive zone; assert the collection shape:
 
 ```php
+use Tests\Support\TestWorld;
+
 it('returns service areas and regions as a GeoJSON FeatureCollection', function (): void {
     actingAsMapAdmin();
 
-    $office = \App\Models\OfficeLocation::factory()->create();
-    $sa = \App\Models\ServiceArea::factory()->create(['name' => 'Tripoli SA', 'is_active' => true]);
-    \App\Models\Region::factory()->create([
-        'service_area_id' => $sa->id, 'office_id' => $office->id, 'name' => 'Center', 'is_active' => true,
-    ]);
-    \App\Models\Region::factory()->create([
-        'service_area_id' => $sa->id, 'office_id' => null, 'name' => 'No Office', 'is_active' => false,
+    // No factories exist for these models — TestWorld::create() seeds one active ServiceArea + Region
+    // (with office, base_fee 10.00) + OfficeLocation, all with a valid 4326 boundary.
+    $world = TestWorld::create();
+    $region = $world['region'];       // name 'Test Region', active, has office
+    $office = $world['office'];
+    $boundary = $region->boundary;    // reuse the valid polygon for the extra region
+
+    \App\Models\Region::create([
+        'service_area_id' => $region->service_area_id,
+        'office_id' => null,
+        'name' => 'No Office',
+        'boundary' => $boundary,
+        'is_active' => false,
+        'base_fee' => '2.00',
     ]);
 
     $res = $this->getJson('/api/admin/map/zones');
@@ -146,10 +155,10 @@ it('returns service areas and regions as a GeoJSON FeatureCollection', function 
 
     $features = collect($res->json('features'));
     $saFeature = $features->firstWhere('properties.kind', 'service_area');
-    expect($saFeature['properties'])->toMatchArray(['kind' => 'service_area', 'name' => 'Tripoli SA', 'is_active' => true]);
+    expect($saFeature['properties'])->toMatchArray(['kind' => 'service_area', 'is_active' => true]);
     expect($saFeature['geometry']['type'])->toBe('Polygon');
 
-    $withOffice = $features->first(fn ($f) => ($f['properties']['kind'] ?? null) === 'region' && ($f['properties']['name'] ?? null) === 'Center');
+    $withOffice = $features->first(fn ($f) => ($f['properties']['name'] ?? null) === 'Test Region');
     expect($withOffice['properties']['office']['id'])->toBe($office->public_id);
     expect($withOffice['properties'])->toHaveKeys(['service_area_id', 'base_fee']);
 
@@ -157,11 +166,17 @@ it('returns service areas and regions as a GeoJSON FeatureCollection', function 
     expect($noOffice['properties']['office'])->toBeNull();       // nullable office
     expect($noOffice['properties']['is_active'])->toBeFalse();   // inactive included
 });
-```
 
-> `Region`/`ServiceArea`/`OfficeLocation` factories must set a valid `boundary` Polygon (4326). If a factory
-> doesn't exist or lacks a boundary, add a minimal factory / `boundary` state (a small square polygon via
-> `clickbar/laravel-magellan`) as part of this step — the plan requires seeded polygons.
+it('emits office: null when a region\'s office is soft-deleted', function (): void {
+    actingAsMapAdmin();
+    $world = TestWorld::create();
+    $world['office']->delete(); // OfficeLocation uses SoftDeletes
+
+    $feature = collect($this->getJson('/api/admin/map/zones')->json('features'))
+        ->first(fn ($f) => ($f['properties']['name'] ?? null) === 'Test Region');
+    expect($feature['properties']['office'])->toBeNull();
+});
+```
 
 - [ ] **Step 2: Run — expect FAIL. Step 3: Implement** the two raw queries + assembly in `__invoke`:
 
@@ -174,8 +189,10 @@ $regions = \Illuminate\Support\Facades\DB::select(
             o.public_id AS office_public_id, o.name AS office_name,
             ST_AsGeoJSON(r.boundary, 6) AS geometry
        FROM regions r
-       LEFT JOIN office_locations o ON o.id = r.office_id'
+       LEFT JOIN office_locations o ON o.id = r.office_id AND o.deleted_at IS NULL'
 );
+// office_locations uses SoftDeletes — the `AND o.deleted_at IS NULL` makes a soft-deleted office yield
+// office_public_id = NULL, so the region emits "office": null (never a stale/deleted office).
 
 $features = [];
 foreach ($serviceAreas as $sa) {
@@ -223,9 +240,11 @@ return response()->json(['type' => 'FeatureCollection', 'features' => $features]
   the ETag:
 
 ```php
+use Tests\Support\TestWorld;
+
 it('serves a weak ETag and honors If-None-Match with 304', function (): void {
     actingAsMapAdmin();
-    \App\Models\ServiceArea::factory()->create();
+    TestWorld::create();
 
     $first = $this->getJson('/api/admin/map/zones');
     $etag = $first->headers->get('ETag');
@@ -238,47 +257,64 @@ it('serves a weak ETag and honors If-None-Match with 304', function (): void {
 
 it('changes the ETag when a zone is added, updated, or deleted', function (): void {
     actingAsMapAdmin();
-    $sa = \App\Models\ServiceArea::factory()->create();
+    $world = TestWorld::create();
+    $sa = \App\Models\ServiceArea::query()->firstOrFail();
+    $boundary = $world['region']->boundary;
+
     $e1 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
 
-    $sa->update(['name' => 'Renamed']);
+    $sa->update(['name' => 'Renamed']);                                   // update → max(updated_at) moves
     $e2 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e2)->not->toBe($e1);
 
-    \App\Models\ServiceArea::factory()->create();
+    \App\Models\ServiceArea::create(['name' => 'Second', 'boundary' => $boundary, 'is_active' => true]); // add → count
     $e3 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e3)->not->toBe($e2);
 
-    $sa->delete();
+    $sa->delete();                                                        // delete → count drops
     $e4 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e4)->not->toBe($e3);
 });
 ```
 
-- [ ] **Step 2: Run — expect FAIL. Step 3: Implement** — compute the ETag from counts + `max(updated_at)` across
-  both tables **before** building the body; short-circuit on `If-None-Match`; attach `ETag` + `Cache-Control`:
+- [ ] **Step 2: Run — expect FAIL. Step 3: Implement** — compute the fingerprint across **all three** tables
+  (service_areas, regions, **office_locations** — the response embeds office name/id), set a weak ETag via
+  Symfony, short-circuit `304` **before** building the body, and attach `Cache-Control`:
 
 ```php
 $fingerprint = \Illuminate\Support\Facades\DB::selectOne(
     "SELECT (SELECT count(*) FROM service_areas) AS sa_c,
             (SELECT COALESCE(max(updated_at)::text,'') FROM service_areas) AS sa_m,
             (SELECT count(*) FROM regions) AS r_c,
-            (SELECT COALESCE(max(updated_at)::text,'') FROM regions) AS r_m"
+            (SELECT COALESCE(max(updated_at)::text,'') FROM regions) AS r_m,
+            (SELECT count(*) FROM office_locations WHERE deleted_at IS NULL) AS o_c,
+            (SELECT COALESCE(max(updated_at)::text,'') FROM office_locations) AS o_m"
 );
-$etag = 'W/\"'.md5($fingerprint->sa_c.'|'.$fingerprint->sa_m.'|'.$fingerprint->r_c.'|'.$fingerprint->r_m).'\"';
+$hash = md5(implode('|', [
+    $fingerprint->sa_c, $fingerprint->sa_m,
+    $fingerprint->r_c,  $fingerprint->r_m,
+    $fingerprint->o_c,  $fingerprint->o_m,   // office rename → o_m changes; soft/hard delete → o_c changes
+]));
 
-if (trim((string) $request->headers->get('If-None-Match')) === $etag) {
-    return response()->json(null, 304)->withHeaders(['ETag' => $etag, 'Cache-Control' => 'private, must-revalidate']);
+// Let Symfony format the weak ETag (W/"<hash>") and compare If-None-Match — do NOT hand-build the header string.
+$response = new \Illuminate\Http\JsonResponse();
+$response->setEtag($hash, true);                         // weak ETag
+$response->headers->set('Cache-Control', 'private, must-revalidate');
+if ($response->isNotModified($request)) {
+    return $response;                                     // 304, no body built
 }
 
-// … build $features … then:
-return response()->json(['type' => 'FeatureCollection', 'features' => $features])
-    ->withHeaders(['ETag' => $etag, 'Cache-Control' => 'private, must-revalidate']);
+// Modified → build the collection and attach it to the same (ETag-bearing) response.
+// … build $features …
+$response->setData(['type' => 'FeatureCollection', 'features' => $features]);
+
+return $response;
 ```
 
-> `updated_at::text` in the fingerprint means add/update/delete all move the count or the max timestamp, so the
-> ETag changes on any mutation. (A delete lowers the count; an add/update raises count or max.) Note a hard
-> delete that lowers `max(updated_at)` back to an older value is still caught by the count change.
+> The fingerprint covers all three tables the response reads (service_areas, regions, office_locations), so any
+> add/update/delete of a zone **or an office** moves a count or a `max(updated_at)` and changes the ETag — no
+> stale `304`. A hard delete that lowers `max(updated_at)` is still caught by the count drop. Office soft-delete
+> lowers `o_c` (filtered `deleted_at IS NULL`) and bumps `o_m`.
 
 - [ ] **Step 4: Run — PASS. Step 5: Pint + commit** `git commit -m "feat(map): ETag/304 conditional caching for zones"`.
 
