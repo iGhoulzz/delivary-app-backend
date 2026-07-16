@@ -73,10 +73,13 @@ as `map/overview`, named `map.zones`). Invokable controller `MapZonesController`
 - **Build in SQL, not by hydrating `Polygon` objects:** one raw query per table
   (`service_areas`; `regions` LEFT JOIN `office_locations`) selecting `ST_AsGeoJSON(boundary, 6)` + the property
   columns; assemble the `FeatureCollection` in PHP (`json_decode` each geometry string into the feature).
-- **HTTP conditional caching:** compute a weak **`ETag`** = hash of `count(*)` + `max(updated_at)` across both
-  tables; send `ETag` + `Cache-Control: private, must-revalidate`. On `If-None-Match` match → **`304 Not
-  Modified`** with an empty body. The frontend uses TanStack Query with a long `staleTime` and gets cheap
-  revalidation instead of re-downloading polygons.
+- **HTTP conditional caching:** compute a weak **`ETag`** = hash of an ordered `id:xmin` **row-version
+  aggregate** across **all three** read tables (`service_areas`, `regions`, and `office_locations` filtered to
+  non-deleted — the response embeds office name/id). `xmin` (the Postgres tuple's transaction id) changes on
+  **every** update, including two within one second and office renames — unlike second-precision `updated_at`.
+  Send `ETag` + `Cache-Control: private, must-revalidate`; on `If-None-Match` match → **`304 Not Modified`** with
+  an empty body. The frontend uses TanStack Query with a long `staleTime` and gets cheap revalidation instead of
+  re-downloading polygons.
 
 ### States & errors
 
@@ -89,8 +92,9 @@ Standard admin JSON. No domain errors (read-only). Empty tables → an empty `fe
 - A region with `office_id = null` emits `"office": null`.
 - Inactive zones are included with `is_active: false`.
 - `ETag` present; a matching `If-None-Match` returns `304` and no body; a stale `If-None-Match` returns `200` +
-  the collection. **Adding, updating, or deleting a zone changes the `ETag`** (assert the ETag differs after each
-  mutation).
+  the collection. **Adding, updating, or deleting a zone — or two same-second updates, or an office rename —
+  changes the `ETag`.** (These mutation tests run under `DatabaseMigrations`, not `RefreshDatabase`, because a
+  single wrapping transaction would keep `xmin` stable across in-test updates.)
 - `role:admin` gate: non-admin → `403`; unauthenticated → `401`; **an admin with `must_change_password` →
   `403`** (the `staff.password_change_required` middleware).
 
@@ -259,4 +263,6 @@ leaves room for them later.
 - Decide one-migration vs two-migration backfill (lock duration at current table size).
 - Confirm, file-by-file, which nested/settlement/reporting payloads currently emit an order reference (add
   `order_number` only where an order id is actually surfaced).
-- Choose the `ST_AsGeoJSON` assembly (raw `DB::select` vs query builder) and the exact `ETag` hash inputs.
+- Choose the `ST_AsGeoJSON` assembly (raw `DB::select` vs query builder). _(Resolved: the `ETag` uses the
+  ordered `id:xmin` row-version aggregate across the three read tables — see the caching decision above and the
+  Slice A plan.)_

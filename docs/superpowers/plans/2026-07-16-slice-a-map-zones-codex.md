@@ -31,7 +31,8 @@
 ```
 NEW
   app/Http/Controllers/Api/Admin/MapZonesController.php
-  tests/Feature/Admin/MapZonesTest.php
+  tests/Feature/Admin/MapZonesTest.php               # gate, FeatureCollection, 304-match, office-null (RefreshDatabase)
+  tests/Feature/Admin/MapZonesEtagChangeTest.php     # ETag changes on mutation (DatabaseMigrations — see Task 3)
 MODIFY
   routes/api.php   # add: Route::get('map/zones', MapZonesController::class)->name('map.zones');
 ```
@@ -239,7 +240,10 @@ return response()->json(['type' => 'FeatureCollection', 'features' => $features]
 - [ ] **Step 1: Failing test** — ETag present; matching `If-None-Match` → 304 (no body); a zone mutation changes
   the ETag:
 
+The **304-match** path has no in-test mutation, so it stays in `MapZonesTest.php` (RefreshDatabase):
+
 ```php
+// tests/Feature/Admin/MapZonesTest.php
 use Tests\Support\TestWorld;
 
 it('serves a weak ETag and honors If-None-Match with 304', function (): void {
@@ -254,45 +258,71 @@ it('serves a weak ETag and honors If-None-Match with 304', function (): void {
     expect($again->status())->toBe(304);
     expect($again->getContent())->toBe('');
 });
+```
+
+> **The ETag-CHANGE tests must NOT use `RefreshDatabase`.** It wraps each test in **one** transaction, so every
+> row the test touches carries that transaction's `xmin`. An in-test `UPDATE` keeps the **same** `xmin`, so the
+> fingerprint wouldn't change and the assertion would fail — for the wrong reason (this is a test artifact, not a
+> production bug; in production each write is its own committed transaction → a new `xmin`). Put the
+> mutation-driven ETag tests in a **separate file using `DatabaseMigrations`** (statements auto-commit, so each
+> update gets a fresh `xmin`, matching production). Sleeping does **not** help — `xmin` is not time-based.
+
+```php
+// tests/Feature/Admin/MapZonesEtagChangeTest.php
+use App\Models\ServiceArea;
+use App\Models\User;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Laravel\Sanctum\Sanctum;
+use Spatie\Permission\Models\Role;
+use Tests\Support\TestWorld;
+
+uses(DatabaseMigrations::class);
+
+// Local helper (Pest per-file helpers don't cross files):
+function actingAsZonesAdmin(): User
+{
+    Role::findOrCreate('admin', 'web');
+    $admin = User::factory()->create();
+    $admin->assignRole('admin');
+    Sanctum::actingAs($admin);
+
+    return $admin;
+}
 
 it('changes the ETag when a zone is added, updated, or deleted', function (): void {
-    actingAsMapAdmin();
+    actingAsZonesAdmin();
     $world = TestWorld::create();
-    $sa = \App\Models\ServiceArea::query()->firstOrFail();
+    $sa = ServiceArea::query()->firstOrFail();
     $boundary = $world['region']->boundary;
 
     $e1 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
-
-    $sa->update(['name' => 'Renamed']);                                   // update → max(updated_at) moves
+    $sa->update(['name' => 'Renamed']);                                          // update → new xmin
     $e2 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e2)->not->toBe($e1);
 
-    \App\Models\ServiceArea::create(['name' => 'Second', 'boundary' => $boundary, 'is_active' => true]); // add → count
+    ServiceArea::create(['name' => 'Second', 'boundary' => $boundary, 'is_active' => true]); // add → new row
     $e3 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e3)->not->toBe($e2);
 
-    $sa->delete();                                                        // delete → row drops from aggregate
+    $sa->delete();                                                               // delete → row drops
     $e4 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e4)->not->toBe($e3);
 });
 
 it('changes the ETag for same-second updates and for an office rename', function (): void {
-    actingAsMapAdmin();
+    actingAsZonesAdmin();
     $world = TestWorld::create();
-    $sa = \App\Models\ServiceArea::query()->firstOrFail();
+    $sa = ServiceArea::query()->firstOrFail();
 
     $e1 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
-    // Two updates in immediate succession (same wall-clock second) — xmin changes each time, so the ETag must
-    // change even though updated_at (1s precision) may not distinguish them.
-    $sa->update(['name' => 'A']);
+    $sa->update(['name' => 'A']);                                                // two committed updates,
     $e2 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
-    $sa->update(['name' => 'B']);
+    $sa->update(['name' => 'B']);                                                // same wall-clock second
     $e3 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e2)->not->toBe($e1);
     expect($e3)->not->toBe($e2);
 
-    // An office rename must change the ETag (office name is embedded in the region features).
-    $world['office']->update(['name' => 'Renamed Office']);
+    $world['office']->update(['name' => 'Renamed Office']);                      // office name is in the response
     $e4 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e4)->not->toBe($e3);
 });

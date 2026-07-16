@@ -144,7 +144,7 @@ declare(strict_types=1);
 
 namespace App\Support\OrderNumber;
 
-use App\Models\Order;
+use Illuminate\Support\Facades\DB;
 
 final class OrderNumberGenerator
 {
@@ -163,7 +163,9 @@ final class OrderNumberGenerator
     {
         for ($attempt = 0; $attempt < self::MAX_ATTEMPTS; $attempt++) {
             $candidate = $this->build();
-            if (! Order::query()->where('order_number', $candidate)->exists()) {
+            // DB::table bypasses the Order SoftDeletes global scope — the UNIQUE index covers soft-deleted rows,
+            // so the collision check must see them too.
+            if (! DB::table('orders')->where('order_number', $candidate)->exists()) {
                 return $candidate;
             }
         }
@@ -264,22 +266,26 @@ declare(strict_types=1);
 
 namespace App\Support\OrderNumber;
 
-use App\Models\Order;
+use Illuminate\Support\Facades\DB;
 
 final class OrderNumberBackfiller
 {
-    /** Assign a unique order_number to every order that currently has none. Collision-safe within the run. */
+    /**
+     * Assign a unique order_number to every order that has none — INCLUDING soft-deleted orders. `DB::table`
+     * bypasses the Order SoftDeletes global scope; trashed rows still need a number (the NOT NULL constraint
+     * covers them and the UNIQUE index spans them). Collision-safe within the run.
+     */
     public static function run(): void
     {
         $generator = new OrderNumberGenerator();
         $used = [];
-        Order::query()->whereNull('order_number')->orderBy('id')->chunkById(500, function ($orders) use ($generator, &$used): void {
+        DB::table('orders')->whereNull('order_number')->orderBy('id')->chunkById(500, function ($orders) use ($generator, &$used): void {
             foreach ($orders as $order) {
                 do {
                     $candidate = $generator->build();
-                } while (isset($used[$candidate]) || Order::query()->where('order_number', $candidate)->exists());
+                } while (isset($used[$candidate]) || DB::table('orders')->where('order_number', $candidate)->exists());
                 $used[$candidate] = true;
-                Order::query()->whereKey($order->getKey())->update(['order_number' => $candidate]);
+                DB::table('orders')->where('id', $order->id)->update(['order_number' => $candidate]);
             }
         });
     }
@@ -324,49 +330,58 @@ return new class extends Migration
 };
 ```
 
-- [ ] **Step 3: Run** `DB_DATABASE=delivary_app_testing php artisan migrate`. **Step 4: Genuine backfill +
-  constraint tests** — drive the **real backfill code** against rows that have **no** `order_number` (not the
-  creating-hook path), then prove the DB enforces NOT NULL and UNIQUE (add to
-  `tests/Feature/Order/OrderNumberTest.php`):
+- [ ] **Step 3: Run** `DB_DATABASE=delivary_app_testing php artisan migrate`. **Step 4: Backfill + constraint
+  tests — as THREE separate tests.** In PostgreSQL the first constraint violation aborts the whole transaction
+  (a caught PHP exception does **not** repair it), so two intentional violations in one test would make the
+  second fail with "current transaction is aborted". Each violation must be the **last** DB op in its own test
+  (add to `tests/Feature/Order/OrderNumberTest.php`):
 
 ```php
 use App\Support\OrderNumber\OrderNumberBackfiller;
 use App\Support\OrderNumber\OrderNumberGenerator;
 use Illuminate\Support\Facades\DB;
 
-it('backfills pre-existing rows that have no order_number, then enforces the constraints', function (): void {
-    // Arrange rows in the pre-backfill state: relax the column, null every order_number.
-    $orders = Order::factory()->count(4)->create();
+it('backfills every row that has no order_number — including soft-deleted orders', function (): void {
+    // Arrange the pre-backfill state: relax the column, null every order_number; include a SOFT-DELETED order.
+    $orders = Order::factory()->count(3)->create();
+    $trashed = Order::factory()->create();
+    $trashed->delete();                                    // soft-deleted — must still be backfilled
     DB::statement('ALTER TABLE orders DROP CONSTRAINT orders_order_number_unique');
     DB::statement('ALTER TABLE orders ALTER COLUMN order_number DROP NOT NULL');
-    DB::table('orders')->update(['order_number' => null]);
-    expect(Order::query()->whereNotNull('order_number')->count())->toBe(0);
+    DB::table('orders')->update(['order_number' => null]); // DB::table hits the trashed row too
+    expect(DB::table('orders')->whereNotNull('order_number')->count())->toBe(0);
 
-    // Act: run the ACTUAL backfill code the migration uses.
-    OrderNumberBackfiller::run();
+    OrderNumberBackfiller::run();                          // the ACTUAL migration backfill code
 
-    // Assert: every row now has a unique, valid, non-null number.
-    $numbers = Order::query()->pluck('order_number');
-    expect($numbers->contains(null))->toBeFalse();
-    expect($numbers->unique()->count())->toBe(4);
-    $numbers->each(fn ($n) => expect((new OrderNumberGenerator())->isValid($n))->toBeTrue());
+    // Every row (incl. the soft-deleted one) now has a unique, valid, non-null number.
+    $all = DB::table('orders')->pluck('order_number');     // DB::table sees the trashed row
+    expect($all)->toHaveCount(4);
+    expect($all->contains(null))->toBeFalse();
+    expect($all->unique()->count())->toBe(4);
+    $all->each(fn ($n) => expect((new OrderNumberGenerator())->isValid($n))->toBeTrue());
+    // The soft-deleted order specifically got a number:
+    expect(DB::table('orders')->where('id', $trashed->id)->value('order_number'))->not->toBeNull();
+});
 
-    // Re-apply the constraints and prove the DB enforces both.
-    DB::statement('ALTER TABLE orders ALTER COLUMN order_number SET NOT NULL');
-    DB::statement('CREATE UNIQUE INDEX orders_order_number_unique ON orders (order_number)');
-
-    // NOT NULL:
-    expect(fn () => DB::table('orders')->where('id', $orders[0]->id)->update(['order_number' => null]))
+it('enforces NOT NULL on order_number', function (): void {
+    $order = Order::factory()->create();
+    // The migrated schema already has NOT NULL — nulling it is the last DB op (aborts the txn; test then ends).
+    expect(fn () => DB::table('orders')->where('id', $order->id)->update(['order_number' => null]))
         ->toThrow(\Illuminate\Database\QueryException::class);
-    // UNIQUE:
-    $dup = Order::query()->whereKey($orders[0]->id)->value('order_number');
-    expect(fn () => DB::table('orders')->where('id', $orders[1]->id)->update(['order_number' => $dup]))
+});
+
+it('enforces UNIQUE on order_number', function (): void {
+    $a = Order::factory()->create();
+    $b = Order::factory()->create();
+    // Assigning a's number to b is the last DB op.
+    expect(fn () => DB::table('orders')->where('id', $b->id)->update(['order_number' => $a->order_number]))
         ->toThrow(\Illuminate\Database\UniqueConstraintViolationException::class);
 });
 ```
 
-  (This exercises `OrderNumberBackfiller::run()` on genuinely-empty `order_number` rows — the same code path the
-  migration runs — and then verifies the NOT NULL + UNIQUE database constraints directly.)
+  (The first test drives `OrderNumberBackfiller::run()` on genuinely-null rows — the migration's own code path —
+  and proves soft-deleted orders are covered; the other two prove the DB constraints, each with the violation as
+  the final statement so the aborted-transaction problem never arises.)
 
 - [ ] **Step 5: Tinker smoke** — `php artisan tinker --execute="echo \Schema::hasColumn('orders','order_number')?'1':'0';"` → `1`. **Step 6: Commit** `git add app/Support/OrderNumber/OrderNumberBackfiller.php database/migrations tests/Feature/Order/OrderNumberTest.php && git commit -m "feat(orders): order_number column + backfill + unique"`.
 
