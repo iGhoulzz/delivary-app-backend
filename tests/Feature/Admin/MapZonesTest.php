@@ -120,3 +120,22 @@ it('emits a null office when a region office is soft-deleted', function (): void
 
     expect($region['properties']['office'])->toBeNull();
 });
+
+it('serves a weak ETag and honors If-None-Match', function (): void {
+    actingAsMapZonesAdmin();
+    TestWorld::create();
+
+    $first = $this->getJson('/api/admin/map/zones')->assertOk();
+    $etag = $first->headers->get('ETag');
+    $cacheControl = $first->headers->get('Cache-Control');
+    expect($etag)->toStartWith('W/"');
+    expect($cacheControl)->toContain('private')->toContain('must-revalidate');
+
+    $this->getJson('/api/admin/map/zones', ['If-None-Match' => $etag])
+        ->assertStatus(304)
+        ->assertContent('');
+
+    $this->getJson('/api/admin/map/zones', ['If-None-Match' => 'W/"stale"'])
+        ->assertOk()
+        ->assertJsonPath('type', 'FeatureCollection');
+});

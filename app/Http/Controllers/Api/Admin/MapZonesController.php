@@ -13,6 +13,23 @@ final class MapZonesController extends Controller
 {
     public function __invoke(Request $request): JsonResponse
     {
+        // PostgreSQL row versions catch every committed change without relying on timestamp precision.
+        $fingerprint = DB::selectOne(
+            "SELECT
+                (SELECT COALESCE(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '') FROM service_areas) AS service_areas,
+                (SELECT COALESCE(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '') FROM regions) AS regions,
+                (SELECT COALESCE(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '') FROM office_locations WHERE deleted_at IS NULL) AS offices"
+        );
+        $etag = md5($fingerprint->service_areas.'|'.$fingerprint->regions.'|'.$fingerprint->offices);
+
+        $response = new JsonResponse;
+        $response->setEtag($etag, true);
+        $response->headers->set('Cache-Control', 'private, must-revalidate');
+
+        if ($response->isNotModified($request)) {
+            return $response;
+        }
+
         $serviceAreas = DB::select(
             'SELECT id, name, is_active, ST_AsGeoJSON(boundary, 6) AS geometry FROM service_areas'
         );
@@ -59,9 +76,11 @@ final class MapZonesController extends Controller
             ];
         }
 
-        return response()->json([
+        $response->setData([
             'type' => 'FeatureCollection',
             'features' => $features,
         ]);
+
+        return $response;
     }
 }
