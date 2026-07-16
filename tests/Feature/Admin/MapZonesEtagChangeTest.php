@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 use App\Models\ServiceArea;
 use App\Models\User;
-use Illuminate\Foundation\Testing\DatabaseTruncation;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Laravel\Sanctum\Sanctum;
 use Spatie\Permission\Models\Role;
 use Tests\Support\TestWorld;
+use Tests\Support\TruncatesPostgisDatabase;
 
-uses(DatabaseTruncation::class);
+uses(TruncatesPostgisDatabase::class);
 
 afterEach(function (): void {
     // Ensure a following RefreshDatabase test migrates cleanly instead of inheriting committed rows.
