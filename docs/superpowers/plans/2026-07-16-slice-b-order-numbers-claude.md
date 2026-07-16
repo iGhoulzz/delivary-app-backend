@@ -26,9 +26,12 @@
 ```
 NEW
   app/Support/OrderNumber/OrderNumberGenerator.php     # format, generate, isValid, normalizeSearchTerm
+  app/Support/OrderNumber/OrderNumberBackfiller.php    # assign order_number to rows where it is null (migration + test)
+  app/Support/OrderNumber/OrderNumberRetry.php         # closure-based unique-violation retry wrapper
   database/migrations/2026_07_16_000100_add_order_number_to_orders_table.php   # add nullable + backfill + constrain
   tests/Unit/OrderNumberGeneratorTest.php
-  tests/Feature/Order/OrderNumberTest.php              # creation + search feature tests
+  tests/Unit/OrderNumberRetryTest.php
+  tests/Feature/Order/OrderNumberTest.php              # creation + search + backfill feature tests
 MODIFY
   app/Models/Order.php                                 # creating hook (assign), keep out of update path
   app/Services/Order/CreationService.php               # wrap DB::transaction() in a unique-violation retry
@@ -249,17 +252,48 @@ final class OrderNumberGenerator
 
 ## Task 2: Migration — add `order_number`, backfill, constrain
 
-**Files:** Create `database/migrations/2026_07_16_000100_add_order_number_to_orders_table.php`.
+**Files:** Create `app/Support/OrderNumber/OrderNumberBackfiller.php`, `database/migrations/2026_07_16_000100_add_order_number_to_orders_table.php`.
 
-- [ ] **Step 1: Implement the migration** (nullable → backfill → unique + not-null, one file):
+- [ ] **Step 1: Extract the backfill into a reusable, testable action** (so the migration test can drive the
+  real backfill code against pre-existing null rows):
+
+```php
+<?php // app/Support/OrderNumber/OrderNumberBackfiller.php
+
+declare(strict_types=1);
+
+namespace App\Support\OrderNumber;
+
+use App\Models\Order;
+
+final class OrderNumberBackfiller
+{
+    /** Assign a unique order_number to every order that currently has none. Collision-safe within the run. */
+    public static function run(): void
+    {
+        $generator = new OrderNumberGenerator();
+        $used = [];
+        Order::query()->whereNull('order_number')->orderBy('id')->chunkById(500, function ($orders) use ($generator, &$used): void {
+            foreach ($orders as $order) {
+                do {
+                    $candidate = $generator->build();
+                } while (isset($used[$candidate]) || Order::query()->where('order_number', $candidate)->exists());
+                $used[$candidate] = true;
+                Order::query()->whereKey($order->getKey())->update(['order_number' => $candidate]);
+            }
+        });
+    }
+}
+```
+
+- [ ] **Step 2: Implement the migration** (nullable → backfill → unique + not-null, one file):
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-use App\Models\Order;
-use App\Support\OrderNumber\OrderNumberGenerator;
+use App\Support\OrderNumber\OrderNumberBackfiller;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -272,20 +306,7 @@ return new class extends Migration
             $table->string('order_number', 20)->nullable()->after('tracking_token');
         });
 
-        // Backfill existing rows with unique numbers. Collision-safe within the run via
-        // an in-memory set + the generator's own randomness; the UNIQUE index (added below) is the backstop.
-        $generator = new OrderNumberGenerator();
-        $used = [];
-        Order::query()->whereNull('order_number')->orderBy('id')->chunkById(500, function ($orders) use ($generator, &$used): void {
-            foreach ($orders as $order) {
-                do {
-                    $candidate = $generator->build();
-                } while (isset($used[$candidate]) || Order::query()->where('order_number', $candidate)->exists());
-                $used[$candidate] = true;
-                // Targeted update — do not touch updated_at semantics other logic relies on.
-                Order::query()->whereKey($order->getKey())->update(['order_number' => $candidate]);
-            }
-        });
+        OrderNumberBackfiller::run(); // assign unique numbers to existing rows (the UNIQUE index below is the backstop)
 
         Schema::table('orders', function (Blueprint $table): void {
             $table->string('order_number', 20)->nullable(false)->change();
@@ -303,31 +324,51 @@ return new class extends Migration
 };
 ```
 
-- [ ] **Step 2: Run** `DB_DATABASE=delivary_app_testing php artisan migrate`. **Step 3: Automated
-  backfill/unique/not-null test** — prove the invariant every order carries a unique, valid, non-null
-  `order_number`, and the DB enforces it (add to `tests/Feature/Order/OrderNumberTest.php`):
+- [ ] **Step 3: Run** `DB_DATABASE=delivary_app_testing php artisan migrate`. **Step 4: Genuine backfill +
+  constraint tests** — drive the **real backfill code** against rows that have **no** `order_number` (not the
+  creating-hook path), then prove the DB enforces NOT NULL and UNIQUE (add to
+  `tests/Feature/Order/OrderNumberTest.php`):
 
 ```php
-it('backfills a unique, valid, non-null order_number for every order and enforces uniqueness', function (): void {
-    $orders = Order::factory()->count(5)->create();
+use App\Support\OrderNumber\OrderNumberBackfiller;
+use App\Support\OrderNumber\OrderNumberGenerator;
+use Illuminate\Support\Facades\DB;
 
-    // Every order has a valid, non-null number; all are distinct.
-    $numbers = $orders->pluck('order_number');
+it('backfills pre-existing rows that have no order_number, then enforces the constraints', function (): void {
+    // Arrange rows in the pre-backfill state: relax the column, null every order_number.
+    $orders = Order::factory()->count(4)->create();
+    DB::statement('ALTER TABLE orders DROP CONSTRAINT orders_order_number_unique');
+    DB::statement('ALTER TABLE orders ALTER COLUMN order_number DROP NOT NULL');
+    DB::table('orders')->update(['order_number' => null]);
+    expect(Order::query()->whereNotNull('order_number')->count())->toBe(0);
+
+    // Act: run the ACTUAL backfill code the migration uses.
+    OrderNumberBackfiller::run();
+
+    // Assert: every row now has a unique, valid, non-null number.
+    $numbers = Order::query()->pluck('order_number');
     expect($numbers->contains(null))->toBeFalse();
-    expect($numbers->unique()->count())->toBe(5);
-    $numbers->each(fn ($n) => expect((new \App\Support\OrderNumber\OrderNumberGenerator())->isValid($n))->toBeTrue());
+    expect($numbers->unique()->count())->toBe(4);
+    $numbers->each(fn ($n) => expect((new OrderNumberGenerator())->isValid($n))->toBeTrue());
 
-    // DB-level: NOT NULL + UNIQUE are enforced (a duplicate insert throws).
-    expect(fn () => \Illuminate\Support\Facades\DB::table('orders')
-        ->where('id', $orders[1]->id)->update(['order_number' => $orders[0]->order_number]))
+    // Re-apply the constraints and prove the DB enforces both.
+    DB::statement('ALTER TABLE orders ALTER COLUMN order_number SET NOT NULL');
+    DB::statement('CREATE UNIQUE INDEX orders_order_number_unique ON orders (order_number)');
+
+    // NOT NULL:
+    expect(fn () => DB::table('orders')->where('id', $orders[0]->id)->update(['order_number' => null]))
+        ->toThrow(\Illuminate\Database\QueryException::class);
+    // UNIQUE:
+    $dup = Order::query()->whereKey($orders[0]->id)->value('order_number');
+    expect(fn () => DB::table('orders')->where('id', $orders[1]->id)->update(['order_number' => $dup]))
         ->toThrow(\Illuminate\Database\UniqueConstraintViolationException::class);
 });
 ```
 
-  (RefreshDatabase runs the migration, so newly-created orders exercise the same generator the backfill uses;
-  the duplicate `DB::table()->update()` proves the UNIQUE index at the database level.)
+  (This exercises `OrderNumberBackfiller::run()` on genuinely-empty `order_number` rows — the same code path the
+  migration runs — and then verifies the NOT NULL + UNIQUE database constraints directly.)
 
-- [ ] **Step 4: Tinker smoke** — `php artisan tinker --execute="echo \Schema::hasColumn('orders','order_number')?'1':'0';"` → `1`. **Step 5: Commit** `git add database/migrations tests/Feature/Order/OrderNumberTest.php && git commit -m "feat(orders): order_number column + backfill + unique"`.
+- [ ] **Step 5: Tinker smoke** — `php artisan tinker --execute="echo \Schema::hasColumn('orders','order_number')?'1':'0';"` → `1`. **Step 6: Commit** `git add app/Support/OrderNumber/OrderNumberBackfiller.php database/migrations tests/Feature/Order/OrderNumberTest.php && git commit -m "feat(orders): order_number column + backfill + unique"`.
 
 > If the orders table is large in production, split into two migrations (add-nullable+backfill, then constrain) to shorten the lock window — decision recorded here; at current volume one file is fine.
 
@@ -378,58 +419,94 @@ if (empty($order->order_number)) {
 Keep `order_number` **out of `$fillable`** (so `update(['order_number' => …])` is ignored — immutability). Add the doc-note that it is generated once and never updated.
 
 - [ ] **Step 4: Run — expect PASS.**
-- [ ] **Step 5: Explicit unique-violation retry — OUTSIDE the transaction.** `CreationService::create()` persists
-  the order inside `return DB::transaction(function () { … })` (`app/Services/Order/CreationService.php:113`). A
-  unique violation **aborts** that Postgres transaction, so re-saving *inside* it cannot succeed — the retry must
-  re-run the **whole** transaction (which regenerates `order_number` via the `creating` hook). Wrap the existing
-  `DB::transaction(...)` call in a bounded retry that catches **only** the `order_number` unique violation:
+- [ ] **Step 5: Explicit unique-violation retry — OUTSIDE the transaction, via a closure helper.**
+  `CreationService::create()` persists inside `return DB::transaction(function () { … })`
+  (`app/Services/Order/CreationService.php:113`). A unique violation **aborts** that Postgres transaction, so
+  re-saving *inside* it cannot succeed — the retry must re-run the **whole** transaction (which regenerates
+  `order_number` via the `creating` hook). Extract a tiny **closure-based** helper (so it is unit-testable
+  without mocking the `final` generator), then wrap the existing transaction call with it:
 
 ```php
-// app/Services/Order/CreationService.php — wrap the existing `return DB::transaction(function () use (...) {...});`
-for ($attempt = 0; ; $attempt++) {
-    try {
-        return DB::transaction(function () use (/* existing captures */) {
-            /* existing transaction body, unchanged */
-        });
-    } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
-        // Retry ONLY the order_number collision; anything else (or exhaustion) rethrows.
-        if ($attempt >= 2 || ! str_contains($e->getMessage(), 'orders_order_number_unique')) {
-            throw $e;
+// app/Support/OrderNumber/OrderNumberRetry.php  (CREATE)
+final class OrderNumberRetry
+{
+    /** Run $tx; on an order_number unique violation, re-run it (fresh order_number) up to $attempts times. */
+    public static function run(\Closure $tx, int $attempts = 3): mixed
+    {
+        for ($i = 1; ; $i++) {
+            try {
+                return $tx();
+            } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                if ($i >= $attempts || ! str_contains($e->getMessage(), 'orders_order_number_unique')) {
+                    throw $e; // exhausted, or a different unique constraint → rethrow
+                }
+            }
         }
-        // loop: the next DB::transaction() re-runs and the creating hook generates a fresh order_number.
     }
 }
 ```
 
-  (`UniqueConstraintViolationException` = Laravel's SQLSTATE `23505` wrapper. If unavailable, catch
-  `\Illuminate\Database\QueryException` and gate on `$e->getCode() === '23505'` **and** the constraint name.)
+```php
+// app/Services/Order/CreationService.php — wrap the existing DB::transaction(...) call:
+return \App\Support\OrderNumber\OrderNumberRetry::run(
+    fn () => DB::transaction(function () use (/* existing captures */) {
+        /* existing transaction body, unchanged */
+    }),
+);
+```
 
-- [ ] **Step 6: Deterministic retry test (seam).** Bind an `OrderNumberGenerator` **double** in the container
-  whose `generate()` returns an **already-used** number on the first call and a fresh one on the second; drive a
-  real `CreationService::create(...)` (reuse the existing order-creation test scaffolding — the setup used by the
-  order lifecycle tests / `scripts/orders-e2e.php`) and assert it **succeeds** with a fresh, valid `order_number`
-  and that `generate()` was called twice:
+  Add `app/Support/OrderNumber/OrderNumberRetry.php` to the file map. (`UniqueConstraintViolationException` is
+  Laravel's SQLSTATE `23505` wrapper.)
+
+- [ ] **Step 6: Unit-test the retry helper directly** (no generator mock — the `final` class needs none here):
 
 ```php
-it('retries the whole transaction on an order_number unique violation', function (): void {
-    $existing = Order::factory()->create();
-    $calls = 0;
-    $fake = Mockery::mock(\App\Support\OrderNumber\OrderNumberGenerator::class)->makePartial();
-    $fake->shouldReceive('generate')->andReturnUsing(function () use (&$calls, $existing) {
-        return $calls++ === 0 ? $existing->order_number : (new \App\Support\OrderNumber\OrderNumberGenerator())->generate();
-    });
-    app()->instance(\App\Support\OrderNumber\OrderNumberGenerator::class, $fake);
+use App\Support\OrderNumber\OrderNumberRetry;
+use Illuminate\Database\UniqueConstraintViolationException;
 
-    // …drive CreationService::create() with the standard valid input (existing creation-test helper)…
-    // expect the created order to persist with a fresh order_number (not $existing->order_number);
-    // expect($calls)->toBe(2);
+function orderNumberViolation(string $constraint): UniqueConstraintViolationException
+{
+    // Construct the exception the way Laravel does; the message must contain the constraint name.
+    return new UniqueConstraintViolationException(
+        'pgsql',
+        'insert into "orders" ...',
+        [],
+        new \PDOException("SQLSTATE[23505]: unique_violation: duplicate key value violates unique constraint \"{$constraint}\""),
+    );
+}
+
+it('retries an order_number unique violation once, then succeeds', function (): void {
+    $calls = 0;
+    $result = OrderNumberRetry::run(function () use (&$calls) {
+        $calls++;
+        if ($calls === 1) {
+            throw orderNumberViolation('orders_order_number_unique');
+        }
+        return 'ok';
+    });
+    expect($result)->toBe('ok');
+    expect($calls)->toBe(2);
+});
+
+it('rethrows a non-order_number unique violation without retrying', function (): void {
+    $calls = 0;
+    expect(function () use (&$calls) {
+        OrderNumberRetry::run(function () use (&$calls) {
+            $calls++;
+            throw orderNumberViolation('orders_public_id_unique');
+        });
+    })->toThrow(UniqueConstraintViolationException::class);
+    expect($calls)->toBe(1);
+});
+
+it('gives up after the attempt cap', function (): void {
+    expect(fn () => OrderNumberRetry::run(fn () => throw orderNumberViolation('orders_order_number_unique'), 3))
+        ->toThrow(UniqueConstraintViolationException::class);
 });
 ```
 
-  > If wiring the full `CreationService` input in a unit test is heavy, extract the retry into a tiny
-  > `withOrderNumberRetry(Closure $tx)` helper on `CreationService` and unit-test **that** directly with a
-  > closure that throws a `UniqueConstraintViolationException` (message containing `orders_order_number_unique`)
-  > on the first call and returns on the second — proving the loop catches, bounds, and rethrows correctly.
+  > If the installed `UniqueConstraintViolationException` constructor signature differs, adjust
+  > `orderNumberViolation()` accordingly (the only requirement: `getMessage()` contains the constraint name).
 
 - [ ] **Step 7: Run — PASS. Pint + commit** `git commit -m "feat(orders): generate immutable order_number on create with transaction retry"`.
 
@@ -567,7 +644,8 @@ actual envelope** (`data`-wrapped vs bare) when asserting the JSON path.
 ## Verification
 
 - [ ] `OrderNumberGenerator` checksum matches the known ISO 7064 MOD 37,36 vectors; format + validation +
-  normalization covered; I/L/O/U handled (body reject, check literal).
+  normalization covered; body **`I/L/O` aliased** (`I/L→1`, `O→0`) and only body **`U` rejected**; check char
+  literal.
 - [ ] New orders get a unique valid `order_number`; backfill fills every existing order; immutable on update;
   explicit unique-violation retry proven.
 - [ ] Search finds orders by full/dashless/body-only/case-insensitive number; existing search intact.
@@ -577,7 +655,8 @@ actual envelope** (`data`-wrapped vs bare) when asserting the JSON path.
 ## Self-review (spec coverage)
 
 - Format ORD + 8 Crockford + ISO 7064 MOD 37,36 check → Task 1 ✓
-- Random + existence loop + UNIQUE index + explicit retry (not transaction-retry) → Tasks 1–3 ✓
+- Random + bounded existence loop + UNIQUE index + explicit **whole-transaction** retry (via `OrderNumberRetry`,
+  since `DB::transaction()` retries only deadlocks) → Tasks 1–3 ✓
 - Migration add→backfill→constrain → Task 2 ✓
 - `isValidOrderNumber` vs `normalizeSearchTerm` separated; dash/case-insensitive search → Tasks 1, 4 ✓
 - Surfaced in every human-facing order payload; `id` still the key → Task 5 ✓

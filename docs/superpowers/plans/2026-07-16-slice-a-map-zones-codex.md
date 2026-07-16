@@ -271,7 +271,28 @@ it('changes the ETag when a zone is added, updated, or deleted', function (): vo
     $e3 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e3)->not->toBe($e2);
 
-    $sa->delete();                                                        // delete → count drops
+    $sa->delete();                                                        // delete → row drops from aggregate
+    $e4 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
+    expect($e4)->not->toBe($e3);
+});
+
+it('changes the ETag for same-second updates and for an office rename', function (): void {
+    actingAsMapAdmin();
+    $world = TestWorld::create();
+    $sa = \App\Models\ServiceArea::query()->firstOrFail();
+
+    $e1 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
+    // Two updates in immediate succession (same wall-clock second) — xmin changes each time, so the ETag must
+    // change even though updated_at (1s precision) may not distinguish them.
+    $sa->update(['name' => 'A']);
+    $e2 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
+    $sa->update(['name' => 'B']);
+    $e3 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
+    expect($e2)->not->toBe($e1);
+    expect($e3)->not->toBe($e2);
+
+    // An office rename must change the ETag (office name is embedded in the region features).
+    $world['office']->update(['name' => 'Renamed Office']);
     $e4 = $this->getJson('/api/admin/map/zones')->headers->get('ETag');
     expect($e4)->not->toBe($e3);
 });
@@ -282,19 +303,17 @@ it('changes the ETag when a zone is added, updated, or deleted', function (): vo
   Symfony, short-circuit `304` **before** building the body, and attach `Cache-Control`:
 
 ```php
+// Row-version fingerprint: Postgres `xmin` (the tuple's inserting/updating xid) changes on EVERY update,
+// even two within the same second — unlike `updated_at`, which has 1-second precision and could miss them.
+// The ordered aggregate of (id, xmin) per table captures every insert (new id), update (new xmin), and delete
+// (id disappears), across the three tables the response reads.
 $fingerprint = \Illuminate\Support\Facades\DB::selectOne(
-    "SELECT (SELECT count(*) FROM service_areas) AS sa_c,
-            (SELECT COALESCE(max(updated_at)::text,'') FROM service_areas) AS sa_m,
-            (SELECT count(*) FROM regions) AS r_c,
-            (SELECT COALESCE(max(updated_at)::text,'') FROM regions) AS r_m,
-            (SELECT count(*) FROM office_locations WHERE deleted_at IS NULL) AS o_c,
-            (SELECT COALESCE(max(updated_at)::text,'') FROM office_locations) AS o_m"
+    "SELECT
+        (SELECT COALESCE(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '') FROM service_areas) AS sa,
+        (SELECT COALESCE(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '') FROM regions) AS r,
+        (SELECT COALESCE(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '') FROM office_locations WHERE deleted_at IS NULL) AS o"
 );
-$hash = md5(implode('|', [
-    $fingerprint->sa_c, $fingerprint->sa_m,
-    $fingerprint->r_c,  $fingerprint->r_m,
-    $fingerprint->o_c,  $fingerprint->o_m,   // office rename → o_m changes; soft/hard delete → o_c changes
-]));
+$hash = md5($fingerprint->sa.'|'.$fingerprint->r.'|'.$fingerprint->o);
 
 // Let Symfony format the weak ETag (W/"<hash>") and compare If-None-Match — do NOT hand-build the header string.
 $response = new \Illuminate\Http\JsonResponse();
@@ -311,10 +330,10 @@ $response->setData(['type' => 'FeatureCollection', 'features' => $features]);
 return $response;
 ```
 
-> The fingerprint covers all three tables the response reads (service_areas, regions, office_locations), so any
-> add/update/delete of a zone **or an office** moves a count or a `max(updated_at)` and changes the ETag — no
-> stale `304`. A hard delete that lowers `max(updated_at)` is still caught by the count drop. Office soft-delete
-> lowers `o_c` (filtered `deleted_at IS NULL`) and bumps `o_m`.
+> The `xmin` row-version aggregate covers all three tables the response reads (service_areas, regions,
+> office_locations), so **any** add/update/delete of a zone **or an office** — including two updates in the same
+> second, or an office rename (office name is in the response) — changes the ETag. No reliance on `updated_at`
+> precision. Soft-deleted offices drop out of the aggregate (`WHERE deleted_at IS NULL`).
 
 - [ ] **Step 4: Run — PASS. Step 5: Pint + commit** `git commit -m "feat(map): ETag/304 conditional caching for zones"`.
 
@@ -330,7 +349,8 @@ return $response;
 
 - [ ] `GET /admin/map/zones` returns a `FeatureCollection`: service-area + region features, correct properties,
   numeric ids, valid GeoJSON geometry, region `office` object **or `null`**, inactive zones included.
-- [ ] `ETag` present; matching `If-None-Match` → `304` empty; add/update/delete changes the ETag.
+- [ ] `ETag` present (row-version `xmin` fingerprint); matching `If-None-Match` → `304` empty;
+  add/update/delete of a zone, **two same-second updates**, and an **office rename** each change the ETag.
 - [ ] Admin gate: non-admin → 403; must-change-password → 403; unauthenticated → 401.
 - [ ] Pint + full Pest green; route registered.
 
