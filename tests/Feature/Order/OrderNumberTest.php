@@ -3,14 +3,27 @@
 declare(strict_types=1);
 
 use App\Models\Order;
+use App\Models\User;
 use App\Support\OrderNumber\OrderNumberBackfiller;
 use App\Support\OrderNumber\OrderNumberGenerator;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Laravel\Sanctum\Sanctum;
+use Spatie\Permission\Models\Role;
 
 uses(RefreshDatabase::class);
+
+function actingAsOrderAdmin(): User
+{
+    Role::findOrCreate('admin', 'web');
+    $admin = User::factory()->create();
+    $admin->assignRole('admin');
+    Sanctum::actingAs($admin);
+
+    return $admin;
+}
 
 it('assigns a valid, unique order_number on creation', function (): void {
     $a = Order::factory()->create();
@@ -60,4 +73,30 @@ it('enforces UNIQUE on order_number', function (): void {
     // Must be the LAST db op.
     expect(fn () => DB::table('orders')->where('id', $b->id)->update(['order_number' => $a->order_number]))
         ->toThrow(UniqueConstraintViolationException::class);
+});
+
+it('finds an order by order_number, with and without dashes and case', function (): void {
+    actingAsOrderAdmin();
+    $order = Order::factory()->create();
+    $other = Order::factory()->create();          // must NOT be returned
+    $number = $order->order_number;               // ORD-XXXX-XXXX-C
+    $dashless = str_replace('-', '', $number);    // ORDXXXXXXXXC
+    $bodyOnly = substr($dashless, 3, 8);          // XXXXXXXX
+
+    foreach ([$number, strtolower($number), $dashless, $bodyOnly] as $term) {
+        $res = $this->getJson('/api/admin/orders?search='.urlencode($term));
+        expect($res->status())->toBe(200);
+        $ids = collect($res->json('data'))->pluck('id');
+        expect($ids)->toContain($order->public_id);
+        expect($ids)->not->toContain($other->public_id);
+    }
+});
+
+it('does not match every order when the term normalizes to empty', function (): void {
+    actingAsOrderAdmin();
+    Order::factory()->count(3)->create();
+    // '---' → normalizeSearchTerm → '' — the order_number clause must be SKIPPED (never LIKE '%%').
+    $res = $this->getJson('/api/admin/orders?search='.urlencode('---'));
+    expect($res->status())->toBe(200);
+    expect($res->json('data'))->toBeEmpty();
 });
