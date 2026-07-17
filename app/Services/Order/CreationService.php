@@ -18,6 +18,7 @@ use App\Exceptions\Order\QuoteMismatchException;
 use App\Models\GuestRecipient;
 use App\Models\Order;
 use App\Models\User;
+use App\Support\OrderNumber\OrderNumberRetry;
 use App\Support\QuoteToken;
 use App\ValueObjects\MerchantOrderContext;
 use Clickbar\Magellan\Data\Geometries\Point;
@@ -105,7 +106,7 @@ final class CreationService
         $receiverType = $receiverUser === null ? ReceiverType::Guest : ReceiverType::RegisteredUser;
         $codePair = $this->codes->generatePair();
 
-        return DB::transaction(function () use (
+        return OrderNumberRetry::run(fn () => DB::transaction(function () use (
             $sender,
             $input,
             $idempotencyKey,
@@ -208,7 +209,7 @@ final class CreationService
             }
 
             return $order->refresh()->load(['driver.driverProfile']);
-        });
+        }));
     }
 
     /**
