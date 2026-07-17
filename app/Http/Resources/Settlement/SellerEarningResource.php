@@ -14,6 +14,7 @@ final class SellerEarningResource extends JsonResource
         return [
             'id' => $this->public_id,
             'order_id' => $this->order?->public_id,
+            'order_number' => $this->order?->order_number,
             'order_description' => $this->order?->item_description,
             'amount' => (string) $this->amount,
             'status' => $this->status->value,

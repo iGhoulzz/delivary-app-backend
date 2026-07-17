@@ -53,7 +53,7 @@ final class SettlementService
 
         $pendingEarnings = SellerEarning::query()
             ->pendingSettlementForDriver($driver->id)
-            ->with('order:id,public_id,item_description,item_price,commission_amount')
+            ->with('order:id,public_id,order_number,item_description,item_price,commission_amount')
             ->get();
 
         return new SettlementPreview(

@@ -126,6 +126,7 @@ final class OverviewMetricsService
      * @return array<int, array{
      *     kind: string,
      *     order_public_id: string|null,
+     *     order_number: string|null,
      *     actor: array{public_id: string, name: string}|null,
      *     to_status: string,
      *     created_at: string|null
@@ -135,7 +136,7 @@ final class OverviewMetricsService
     {
         return OrderStatusLog::query()
             ->with([
-                'order:id,public_id',
+                'order:id,public_id,order_number',
                 'actor:id,public_id,first_name,last_name',
             ])
             ->latest('created_at')
@@ -145,6 +146,7 @@ final class OverviewMetricsService
             ->map(fn (OrderStatusLog $log): array => [
                 'kind' => $this->kindFor($log->to_status),
                 'order_public_id' => $log->order?->public_id,
+                'order_number' => $log->order?->order_number,
                 'actor' => $this->actor($log->actor),
                 'to_status' => $log->to_status->value,
                 'created_at' => $log->created_at?->toIso8601String(),

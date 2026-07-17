@@ -49,6 +49,7 @@ final class OfficeOrderResource extends JsonResource
 
         return [
             'id' => $order->public_id,
+            'order_number' => $order->order_number,
             'status' => $order->status->value,
             'order_type' => $order->order_type->value,
             'item' => [

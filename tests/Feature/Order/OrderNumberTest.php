@@ -2,8 +2,14 @@
 
 declare(strict_types=1);
 
+use App\Enums\OrderActorType;
+use App\Enums\OrderStatus;
+use App\Models\DriverProfile;
+use App\Models\DriverStrike;
 use App\Models\Order;
+use App\Models\OrderStatusLog;
 use App\Models\User;
+use App\Services\Reporting\OverviewMetricsService;
 use App\Support\OrderNumber\OrderNumberBackfiller;
 use App\Support\OrderNumber\OrderNumberGenerator;
 use Illuminate\Database\QueryException;
@@ -99,4 +105,60 @@ it('does not match every order when the term normalizes to empty', function (): 
     $res = $this->getJson('/api/admin/orders?search='.urlencode('---'));
     expect($res->status())->toBe(200);
     expect($res->json('data'))->toBeEmpty();
+});
+
+it('exposes order_number beside id on the admin order resource', function (): void {
+    actingAsOrderAdmin();
+    $order = Order::factory()->create();
+    $res = $this->getJson('/api/admin/orders/'.$order->public_id);
+    // AdminOrderResource single responses are wrapped in `data`.
+    expect($res->json('data.order_number'))->toBe($order->order_number);
+    expect($res->json('data.id'))->toBe($order->public_id); // id unchanged — additive only
+});
+
+it('exposes order_number beside id on the nested order reference in DriverStrikeResource', function (): void {
+    Role::findOrCreate('admin', 'web');
+    Role::findOrCreate('driver', 'web');
+
+    actingAsOrderAdmin();
+
+    $driver = User::factory()->create();
+    $driver->assignRole('driver');
+    DriverProfile::factory()->create(['user_id' => $driver->id]);
+
+    $order = Order::factory()->create();
+    DriverStrike::create([
+        'driver_id' => $driver->id,
+        'order_id' => $order->id,
+        'reason' => 'no_show_at_pickup',
+        'issued_by' => 'system',
+        'fee_amount' => 10,
+        'is_voided' => false,
+    ]);
+
+    $res = $this->getJson("/api/admin/drivers/{$driver->public_id}/strikes");
+
+    expect($res->status())->toBe(200);
+    expect($res->json('strikes.0.order.id'))->toBe($order->public_id);
+    expect($res->json('strikes.0.order.order_number'))->toBe($order->order_number);
+});
+
+it('carries order_number beside order_public_id in the overview activity feed', function (): void {
+    $actor = User::factory()->create();
+    $order = Order::factory()->create(['status' => OrderStatus::Delivered->value]);
+
+    OrderStatusLog::query()->create([
+        'order_id' => $order->id,
+        'from_status' => OrderStatus::DeliveryInProgress->value,
+        'to_status' => OrderStatus::Delivered->value,
+        'actor_type' => OrderActorType::Admin->value,
+        'actor_id' => $actor->id,
+        'created_at' => now(),
+    ]);
+
+    $activity = app(OverviewMetricsService::class)->build()['activity'];
+
+    expect($activity)->toHaveCount(1)
+        ->and($activity[0]['order_public_id'])->toBe($order->public_id)
+        ->and($activity[0]['order_number'])->toBe($order->order_number);
 });

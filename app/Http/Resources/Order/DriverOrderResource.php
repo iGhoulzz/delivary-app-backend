@@ -19,6 +19,7 @@ final class DriverOrderResource extends JsonResource
 
         return [
             'id' => $o->public_id,
+            'order_number' => $o->order_number,
             'order_type' => $o->order_type->value,
             'status' => $o->status->value,                  // raw — driver needs granularity
             'status_changed_at' => $o->status_changed_at?->toIso8601String(),

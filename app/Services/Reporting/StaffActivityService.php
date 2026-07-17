@@ -159,6 +159,7 @@ final class StaffActivityService
             ->orderBy('order_status_logs.created_at', 'desc')
             ->select([
                 'orders.public_id       AS order_public_id',
+                'orders.order_number    AS order_number',
                 'order_status_logs.from_status',
                 'order_status_logs.to_status',
                 'order_status_logs.created_at AS occurred_at',
@@ -168,7 +169,7 @@ final class StaffActivityService
                 'kind' => 'order_action',
                 'occurred_at' => $this->toIso($row->occurred_at),
                 'actor' => $actor,
-                'order' => ['public_id' => $row->order_public_id],
+                'order' => ['public_id' => $row->order_public_id, 'order_number' => $row->order_number],
                 'from_status' => $row->from_status,
                 'to_status' => $row->to_status,
             ]);
@@ -398,6 +399,7 @@ final class StaffActivityService
             ->orderBy('office_inventory.received_at', 'desc')
             ->select([
                 'orders.public_id        AS order_public_id',
+                'orders.order_number     AS order_number',
                 'office_inventory.received_at AS occurred_at',
             ])
             ->get()
@@ -405,7 +407,7 @@ final class StaffActivityService
                 'kind' => 'office_return_received',
                 'occurred_at' => $this->toIso($row->occurred_at),
                 'actor' => $actor,
-                'order' => ['public_id' => $row->order_public_id],
+                'order' => ['public_id' => $row->order_public_id, 'order_number' => $row->order_number],
             ]);
     }
 
@@ -426,6 +428,7 @@ final class StaffActivityService
             ->orderBy('office_inventory.retrieved_at', 'desc')
             ->select([
                 'orders.public_id              AS order_public_id',
+                'orders.order_number           AS order_number',
                 'office_inventory.retrieved_at AS occurred_at',
             ])
             ->get()
@@ -433,7 +436,7 @@ final class StaffActivityService
                 'kind' => 'office_order_retrieved',
                 'occurred_at' => $this->toIso($row->occurred_at),
                 'actor' => $actor,
-                'order' => ['public_id' => $row->order_public_id],
+                'order' => ['public_id' => $row->order_public_id, 'order_number' => $row->order_number],
             ]);
     }
 
@@ -610,6 +613,7 @@ final class StaffActivityService
             ->orderBy('office_inventory.abandoned_at', 'desc')
             ->select([
                 'orders.public_id              AS order_public_id',
+                'orders.order_number           AS order_number',
                 'office_inventory.abandoned_at AS occurred_at',
             ])
             ->get()
@@ -617,7 +621,7 @@ final class StaffActivityService
                 'kind' => 'order_abandoned',
                 'occurred_at' => $this->toIso($row->occurred_at),
                 'actor' => $actor,
-                'order' => ['public_id' => $row->order_public_id],
+                'order' => ['public_id' => $row->order_public_id, 'order_number' => $row->order_number],
             ]);
     }
 

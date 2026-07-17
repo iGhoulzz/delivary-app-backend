@@ -18,7 +18,7 @@ final class ShowEarningsController extends Controller
 
         $earnings = SellerEarning::query()
             ->forSeller($user->id)
-            ->with('order:id,public_id,item_description')
+            ->with('order:id,public_id,order_number,item_description')
             ->orderByDesc('created_at')
             ->limit(200)
             ->get();

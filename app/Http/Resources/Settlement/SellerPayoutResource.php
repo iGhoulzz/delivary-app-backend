@@ -29,6 +29,7 @@ final class SellerPayoutResource extends JsonResource
                 'orders',
                 fn () => $this->orders->map(static fn ($order): array => [
                     'order_id' => $order->public_id,
+                    'order_number' => $order->order_number,
                     'item_description' => $order->item_description,
                     'amount_contributed' => (string) $order->pivot->amount_contributed,
                 ])->all(),

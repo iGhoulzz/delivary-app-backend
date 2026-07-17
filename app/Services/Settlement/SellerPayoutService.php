@@ -38,7 +38,7 @@ final class SellerPayoutService
         return SellerEarning::query()
             ->forSeller($seller->id)
             ->available()
-            ->with('order:id,public_id,item_description,order_type,delivered_at')
+            ->with('order:id,public_id,order_number,item_description,order_type,delivered_at')
             ->orderBy('available_at')
             ->get();
     }

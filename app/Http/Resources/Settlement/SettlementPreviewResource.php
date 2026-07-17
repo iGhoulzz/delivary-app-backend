@@ -23,6 +23,7 @@ final class SettlementPreviewResource extends JsonResource
             'instructions' => $this->buildInstructions(),
             'pending_earnings' => $this->resource->pendingEarnings->map(static fn ($earning): array => [
                 'order_id' => $earning->order?->public_id,
+                'order_number' => $earning->order?->order_number,
                 'item_description' => $earning->order?->item_description,
                 'item_price' => (string) ($earning->order?->item_price ?? '0.00'),
                 'amount' => (string) $earning->amount,
