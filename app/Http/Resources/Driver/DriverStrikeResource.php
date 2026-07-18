@@ -19,7 +19,7 @@ final class DriverStrikeResource extends JsonResource
             'reason' => $this->reason->value,
             'issued_by' => $this->issued_by->value,
             'order' => $this->relationLoaded('order') && $this->order !== null
-                ? ['id' => $this->order->public_id]
+                ? ['id' => $this->order->public_id, 'order_number' => $this->order->order_number]
                 : null,
             'fee_amount' => $this->fee_amount,
             'is_voided' => (bool) $this->is_voided,

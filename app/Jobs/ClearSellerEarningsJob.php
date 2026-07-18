@@ -38,7 +38,7 @@ final class ClearSellerEarningsJob implements ShouldQueue
                         $earning->status = SellerEarningStatus::Available->value;
                         $earning->available_at = now();
                         $earning->save();
-                        $earning->loadMissing(['order:id,public_id,item_description']);
+                        $earning->loadMissing(['order:id,public_id,order_number,item_description']);
 
                         event(new SellerEarningCleared(
                             $earning,

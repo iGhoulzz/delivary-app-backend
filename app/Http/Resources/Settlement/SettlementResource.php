@@ -39,6 +39,7 @@ final class SettlementResource extends JsonResource
                 'orders',
                 fn () => $this->orders->map(static fn ($order): array => [
                     'order_id' => $order->public_id,
+                    'order_number' => $order->order_number,
                     'amount_contributed' => (string) $order->pivot->amount_contributed,
                 ])->all(),
             ),

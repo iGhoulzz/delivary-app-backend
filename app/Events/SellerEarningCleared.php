@@ -49,7 +49,7 @@ final class SellerEarningCleared implements ShouldBroadcast
     /** @return array<string, mixed> */
     public function broadcastWith(): array
     {
-        $earning = $this->earning->loadMissing(['order:id,public_id,item_description']);
+        $earning = $this->earning->loadMissing(['order:id,public_id,order_number,item_description']);
 
         return [
             'type' => self::EVENT_NAME,

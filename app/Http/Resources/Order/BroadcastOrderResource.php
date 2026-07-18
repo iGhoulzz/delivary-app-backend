@@ -20,6 +20,7 @@ final class BroadcastOrderResource extends JsonResource
 
         return [
             'id' => $order->public_id,
+            'order_number' => $order->order_number,
             'order_type' => $order->order_type->value,
             'status' => $order->status->value,
             'pickup' => [

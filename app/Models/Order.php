@@ -15,6 +15,7 @@ use App\Enums\PickupMethod;
 use App\Enums\ReceiverType;
 use App\Enums\ReturnFault;
 use App\Enums\ReturnReason;
+use App\Support\OrderNumber\OrderNumberGenerator;
 use Clickbar\Magellan\Data\Geometries\Point;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -84,6 +85,9 @@ final class Order extends Model
             }
             if (empty($order->tracking_token)) {
                 $order->tracking_token = (string) Str::ulid();
+            }
+            if (empty($order->order_number)) {
+                $order->order_number = app(OrderNumberGenerator::class)->generate();
             }
         });
     }

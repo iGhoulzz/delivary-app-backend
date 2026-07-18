@@ -22,6 +22,7 @@ final class GuestTrackingResource extends JsonResource
 
         return [
             'id' => $o->public_id,
+            'order_number' => $o->order_number,
             'display_status' => OrderDisplayStatus::fromInternal($o->status),
             'order_type' => $o->order_type->value,
             'item' => [

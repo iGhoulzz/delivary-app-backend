@@ -71,6 +71,7 @@ final class UserDetailResource extends JsonResource
             ->get()
             ->map(static fn (Order $order): array => [
                 'id' => $order->public_id,
+                'order_number' => $order->order_number,
                 'order_type' => $order->order_type->value,
                 'status' => $order->status->value,
                 'role' => $order->sender_user_id === $user->id ? 'sender' : 'receiver',

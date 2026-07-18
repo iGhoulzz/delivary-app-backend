@@ -27,7 +27,7 @@ final class FinanceReportService
      *     by_merchant: array<int, array{merchant: array{public_id: string, name: string}, amount: string}>,
      *     by_office: array<int, array{office: array{public_id: string, name: string}|string, amount: string}>,
      *     daily_trend: array<int, array{date: string, amount: string}>,
-     *     recent_orders: array<int, array{order_public_id: string, type: string, merchant: array{public_id: string, name: string}|null, item_value: string|null, commission_amount: string, driver_fee_cut_amount: string, platform_revenue: string}>
+     *     recent_orders: array<int, array{order_public_id: string, order_number: string, type: string, merchant: array{public_id: string, name: string}|null, item_value: string|null, commission_amount: string, driver_fee_cut_amount: string, platform_revenue: string}>
      * }
      */
     public function build(string $range, ?int $officeId): array
@@ -254,7 +254,7 @@ final class FinanceReportService
     /**
      * Latest ~12 delivered orders in the range, sorted by delivered_at DESC.
      *
-     * @return array<int, array{order_public_id: string, type: string, merchant: array{public_id: string, name: string}|null, item_value: string|null, commission_amount: string, driver_fee_cut_amount: string, platform_revenue: string}>
+     * @return array<int, array{order_public_id: string, order_number: string, type: string, merchant: array{public_id: string, name: string}|null, item_value: string|null, commission_amount: string, driver_fee_cut_amount: string, platform_revenue: string}>
      */
     private function recentOrders(CarbonImmutable $from, CarbonImmutable $to, ?int $officeId): array
     {
@@ -269,6 +269,7 @@ final class FinanceReportService
             ->limit(12)
             ->selectRaw(
                 'orders.public_id                                                                                           AS order_public_id,
+                 orders.order_number                                                                                        AS order_number,
                  orders.order_type                                                                                          AS type,
                  merchant_profiles.public_id                                                                                AS merchant_public_id,
                  merchant_profiles.business_name                                                                            AS merchant_name,
@@ -286,6 +287,7 @@ final class FinanceReportService
             ->get()
             ->map(fn (object $row): array => [
                 'order_public_id' => $row->order_public_id,
+                'order_number' => $row->order_number,
                 'type' => $row->type,
                 'merchant' => $row->merchant_public_id !== null
                     ? ['public_id' => $row->merchant_public_id, 'name' => $row->merchant_name]

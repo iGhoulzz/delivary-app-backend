@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Services\Order\AdminAssignmentService;
 use App\Services\Order\CancellationService;
 use App\Services\Order\FailedDeliveryService;
+use App\Support\OrderNumber\OrderNumberGenerator;
 use App\Support\Resolvers\PublicIdResolver;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
@@ -29,6 +30,7 @@ final class OrderController extends Controller
         private readonly AdminAssignmentService $assignments,
         private readonly CancellationService $cancellations,
         private readonly FailedDeliveryService $failures,
+        private readonly OrderNumberGenerator $orderNumbers,
     ) {}
 
     public function index(AdminListOrdersRequest $request): AnonymousResourceCollection
@@ -54,13 +56,21 @@ final class OrderController extends Controller
 
         if (isset($validated['search'])) {
             $search = trim((string) $validated['search']);
-            $query->where(static fn ($q) => $q
-                ->where('public_id', 'ilike', '%'.$search.'%')
-                ->orWhere('tracking_token', 'ilike', '%'.$search.'%')
-                ->orWhere('sender_name', 'ilike', '%'.$search.'%')
-                ->orWhere('sender_phone', 'like', '%'.$search.'%')
-                ->orWhere('receiver_name', 'ilike', '%'.$search.'%')
-                ->orWhere('receiver_phone', 'like', '%'.$search.'%'));
+            $normalized = $this->orderNumbers->normalizeSearchTerm($search);
+            $query->where(static function ($q) use ($search, $normalized): void {
+                $q->where('public_id', 'ilike', '%'.$search.'%')
+                    ->orWhere('tracking_token', 'ilike', '%'.$search.'%')
+                    ->orWhere('sender_name', 'ilike', '%'.$search.'%')
+                    ->orWhere('sender_phone', 'like', '%'.$search.'%')
+                    ->orWhere('receiver_name', 'ilike', '%'.$search.'%')
+                    ->orWhere('receiver_phone', 'like', '%'.$search.'%');
+
+                // Guard: normalizeSearchTerm('---') === '' — without this check the LIKE
+                // below would become '%%' and match every order.
+                if ($normalized !== '') {
+                    $q->orWhereRaw("upper(replace(order_number, '-', '')) like ?", ['%'.$normalized.'%']);
+                }
+            });
         }
 
         return AdminOrderResource::collection(
