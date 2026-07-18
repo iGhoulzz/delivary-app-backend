@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\Reporting\OverviewMetricsService;
 use App\Support\OrderNumber\OrderNumberBackfiller;
 use App\Support\OrderNumber\OrderNumberGenerator;
+use App\Support\OrderNumber\OrderNumberRetry;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -44,6 +45,56 @@ it('does not change order_number on update (immutable)', function (): void {
     $original = $order->order_number;
     $order->update(['order_number' => 'ORD-AAAA-AAAA-0']); // ignored — not fillable
     expect($order->fresh()->order_number)->toBe($original);
+});
+
+it('generate() skips a pre-seeded collision and returns a fresh, unused number', function (): void {
+    // A number already present in the orders table — generate()'s existence check must see it and skip it.
+    $taken = Order::factory()->create()->order_number;
+    // A distinct, valid candidate that is NOT in the table.
+    $fresh = 'ORD-2345-6789-'.(new OrderNumberGenerator)->checkCharacter('23456789');
+    expect($fresh)->not->toBe($taken);
+
+    // Seam build() so the first candidate collides and the second is free: generate() must loop past
+    // the taken value and return the free one.
+    $gen = Mockery::mock(OrderNumberGenerator::class)->makePartial();
+    $gen->shouldReceive('build')->twice()->andReturn($taken, $fresh);
+
+    expect($gen->generate())->toBe($fresh);
+});
+
+it('generate() gives up with a RuntimeException when every candidate collides (bounded attempts)', function (): void {
+    $taken = Order::factory()->create()->order_number;
+
+    // Every candidate collides, so generate() exhausts its bounded attempts (MAX_ATTEMPTS = 5) and throws
+    // rather than looping forever.
+    $gen = Mockery::mock(OrderNumberGenerator::class)->makePartial();
+    $gen->shouldReceive('build')->times(5)->andReturn($taken);
+
+    expect(fn () => $gen->generate())->toThrow(RuntimeException::class);
+});
+
+it('the create path regenerates a fresh order_number after an orders_order_number_unique insert collision', function (): void {
+    // An order_number already held by an existing row.
+    $taken = Order::factory()->create()->order_number;
+    // The value the retry lands on once it regenerates.
+    $fresh = 'ORD-2345-6789-'.(new OrderNumberGenerator)->checkCharacter('23456789');
+    expect($fresh)->not->toBe($taken);
+
+    // Seam the generator the creating hook resolves from the container: the FIRST insert reuses $taken
+    // (forcing a real orders_order_number_unique 23505), the retry regenerates $fresh. Mocking generate()
+    // bypasses its own existence check on purpose — this reproduces the check-then-insert race that
+    // OrderNumberRetry exists to absorb.
+    $gen = Mockery::mock(OrderNumberGenerator::class);
+    $gen->shouldReceive('generate')->twice()->andReturn($taken, $fresh);
+    $this->app->instance(OrderNumberGenerator::class, $gen);
+
+    // Mirrors CreationService: OrderNumberRetry wraps the DB::transaction so the aborted attempt rolls
+    // back to its savepoint and the whole transaction re-runs with a freshly generated number.
+    $order = OrderNumberRetry::run(fn () => DB::transaction(fn () => Order::factory()->create()));
+
+    expect($order->order_number)->toBe($fresh);
+    expect(Order::query()->where('order_number', $fresh)->exists())->toBeTrue();
+    expect(Order::query()->where('order_number', $taken)->count())->toBe(1); // only the seed row holds $taken
 });
 
 it('backfills every row that has no order_number — including soft-deleted orders', function (): void {

@@ -8,7 +8,9 @@ use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use RuntimeException;
 
-final class OrderNumberGenerator
+// Not final: OrderNumberGenerator is a container-resolved seam. Tests partial-mock build()/generate()
+// to drive the collision-retry and exhaustion paths deterministically (see OrderNumberTest).
+class OrderNumberGenerator
 {
     private const PREFIX = 'ORD';
 
