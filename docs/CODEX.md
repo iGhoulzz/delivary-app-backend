@@ -1119,3 +1119,29 @@ Next session checklist:
 - If working in the backend repo, review/finish `docs/superpowers/specs/2026-06-23-dashboard-frontend-design.md` and then write the Slice 0 plan.
 - If working in the frontend repo, start from that spec and build **Slice 0 - Foundation** only: scaffold, theme/RTL/design primitives, router, API client, auth/login, password-change gate, empty shell, and required Playwright smoke `login -> /auth/me -> overview shell`.
 - When switching Codex to the frontend folder, explicitly tell the new session to read this handoff plus the frontend spec in the backend repo; a fresh session will not automatically have this chat history.
+
+---
+
+## 2026-07-19 Dashboard Operations UX Support closeout
+
+Post-merge closeout after PRs #27 (Slice A, Codex) and #28 (Slice B, Claude) landed on `main`.
+
+Scope:
+
+- Added `SYSTEM_SPECIFICATION.md §17.20` covering both slices: the `/admin/map/zones` GeoJSON contract (kind discriminator, all-rows emission, `ST_AsGeoJSON(…, 6)` with no `ST_Simplify`, SQL-built features, `Cache-Control: private, must-revalidate`) and the `order_number` format, immutability, search normalisation, and two-layer collision handling.
+- Recorded the locked decision that the ULID `id`/`public_id` remains the key for all routes, authorization, realtime channels, and actions — `order_number` is display/search only.
+- Recorded why `OrderNumberRetry` matches `$e->index` exactly rather than substring-matching the exception message (bindings carry user-controlled free text, so substring matching could win a wrong retry).
+- Updated `docs/CLAUDE.md` "Current Project State": marked the milestone complete, refreshed the test count to 413, corrected the stale "Vue 3 frontend" note to the actual React 18 + TS separate repo with Slices 0 and 1 merged, and set **Zone Management** as the next milestone.
+
+Cross-review note:
+
+- Codex's review of PR #28 found no production defects but flagged a spec acceptance gap: spec lines 226–232 require the `generate()` collision path to be exercised against a pre-seeded value (including exhaustion) and the create-path retry to be proven against a real insert collision. Existing tests covered `build()` and the retry helper only in isolation. Closed by commit `7500fb1` with three deterministic tests; `OrderNumberGenerator` lost its `final` marker so the `build()`/`generate()` seam can be partial-mocked.
+
+Known gap carried forward:
+
+- Service areas, regions, and offices are **seed-only** — no admin write path exists, while `regions.base_fee` prices every order and `regions.office_id` drives finance attribution and driver region assignment. Additional hazards found during closeout: `orders.pickup_region_id` is `nullOnDelete` (deleting a region silently blanks finance attribution on historical orders), `regions.service_area_id` is `cascadeOnDelete`, `driver_region.region_id` cascades, `PricingService::resolveRegion` resolves overlaps arbitrarily via `LIMIT 1`, and region-inside-service-area containment is documented in §7.3 but never enforced. These drive the Zone Management design.
+
+Verification:
+
+- Docs-only; no backend code changed.
+- Full Pest suite on merged `main`: **413/413** (1425 assertions) green. Pint clean. `route:list --path=admin/map` shows `admin.map.zones`.

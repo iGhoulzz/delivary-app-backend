@@ -1370,6 +1370,30 @@ Second backend-support pass for the internal dashboard. Dashboard Support A cove
 
 **Verified on merged `main`:** full Pest suite **370/370** (1278 assertions) green, targeted finance/order/merchant tests green, Pint clean, `route:list` confirms all four admin endpoints.
 
+### 17.20 Dashboard Operations UX Support milestone (2026-07-19) ✅
+
+Small additive backend milestone unblocking two dashboard UX improvements. Two independent slices, each its own spec section, plan, branch, and PR, merged in either order — Codex built Slice A, Claude built Slice B, cross-reviewed both directions. Spec `docs/superpowers/specs/2026-07-16-dashboard-operations-ux-support-design.md`; plans `docs/superpowers/plans/2026-07-16-slice-a-map-zones-codex.md` and `…-slice-b-order-numbers-claude.md`. PRs #27 (Slice A) / #28 (Slice B).
+
+**Endpoint shipped** (`sanctum` + `role:admin` + `staff.password_change_required`):
+
+| Endpoint | Method | Slice |
+|---|---|---|
+| `/api/admin/map/zones` — service-area + region polygons as one GeoJSON `FeatureCollection` | GET | A |
+
+**Slice A — Map Zone GeoJSON.** A static, cacheable source of the operational zone polygons, deliberately separate from the 60s-polled `/map/overview` so polygons are not re-transferred on every poll. One `FeatureCollection`; a `kind` property (`service_area` \| `region`) discriminates the two layers so the frontend fetches once and layers by kind. **All rows are emitted** (active + inactive) with `is_active` — the set is small (dozens) and admins may want to see draft zones; the frontend decides what to render. Regions additionally carry `service_area_id`, `base_fee`, and a nullable public `office` reference (`{id, name}`, where `id` is the office `public_id`); service areas carry none of these. Geometry is built **in SQL** via `ST_AsGeoJSON(boundary, 6)` (~0.1 m precision) across one raw query per table rather than by hydrating `Polygon` objects, and the `FeatureCollection` is assembled in PHP. **No `ST_Simplify`** — topology simplification would open gaps and overlaps between adjacent polygons. Response carries `Cache-Control: private, must-revalidate`. Zone **numeric ids are the deliberate Rule 5 reference-data exception**, consistent with `/admin/reference.regions[]`; the only public id in the payload is `office.id`.
+
+**Slice B — Human-readable order numbers.** An immutable, unique `order_number` in the form `ORD-XXXX-XXXX-C`, surfaced beside the ULID `id` in every order-bearing payload. The body is 8 **Crockford Base32** characters (`0-9 A-Z` minus `I, L, O, U` — the glyphs humans confuse); the trailing check character is **ISO 7064 MOD 37,36** computed over the body only, excluding the `ORD` prefix and dashes. The check character is drawn from the full `0-9A-Z` alphabet, so it may legitimately be `I/L/O/U` and is therefore compared **literally**, while the body gets Crockford input-aliasing (`I/L → 1`, `O → 0`) and rejects `U`. Assigned in the `Order::creating` hook; **not fillable**, so it is immutable across updates. Admin order search accepts the number dashless and case-insensitively via a normalized term, and **skips the clause entirely when the term normalizes to empty** (never `LIKE '%%'`).
+
+**Collision handling (two layers).** `OrderNumberGenerator::generate()` existence-checks each candidate through `DB::table()` — bypassing the `SoftDeletes` global scope, because the UNIQUE index covers soft-deleted rows too — and throws after 5 bounded attempts. Because a concurrent insert can still take a number between that check and the insert, order creation is additionally wrapped in `OrderNumberRetry::run()`, which re-runs the **whole transaction** (Postgres aborts the transaction on the violation, and `DB::transaction()`'s own retry only covers deadlocks). The violated index is matched **exactly** against `$e->index` rather than by substring-matching the message: the message interpolates query bindings carrying user-controlled free text (item descriptions, notes, names), so substring matching would let a different constraint's violation smuggle the index name in and win a wrong retry. Exact matching is also rename-safe.
+
+**Locked decisions:** the ULID `id`/`public_id` remains the key for **all** routes, authorization, realtime channels, and actions — `order_number` is a human-facing display/search field only, never a route key. Backfill runs offline in the migration via the same `OrderNumberBackfiller` the tests exercise. `OrderNumberGenerator` is intentionally **not `final`** so tests can partial-mock the `build()`/`generate()` seam and drive the collision and exhaustion paths deterministically.
+
+**Schema delta:** one additive migration — `orders.order_number` (column + offline backfill + `orders_order_number_unique`). Slice A added no schema.
+
+**Verified on merged `main`:** full Pest suite **413/413** (1425 assertions) green, Pint clean, `route:list --path=admin/map` shows `admin.map.zones` beside the existing `admin.map.overview`.
+
+**Known gap surfaced by this milestone:** service areas, regions, and offices remain **seed-only** — there is no admin write path for any of them, and `regions.base_fee` prices every order. Slice A ships the read side of the zone map; authoring is the next milestone (see §17.21 when it lands).
+
 **End of Specification Document**
 
 *This document represents all locked architectural decisions. Future questions and decisions should be appended to this document with date stamps.*
